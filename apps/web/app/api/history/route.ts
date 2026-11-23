@@ -2,7 +2,7 @@ import { getAuth } from '@/lib/auth';
 import { database } from '@/lib/db';
 import type { Game } from '@/lib/game';
 
-export const dynamic = 'force-dynamic';
+import { connection } from 'next/server';
 
 type Row = { id: string; state: Game };
 
@@ -11,6 +11,7 @@ type Row = { id: string; state: Game };
  * authenticated organizer are returned; host/player tokens never leave the DB.
  */
 export async function GET(req: Request) {
+  await connection();
   const session = await (await getAuth()).api.getSession({ headers: req.headers });
   if (!session) return Response.json({ error: 'Сначала войдите в аккаунт' }, { status: 401 });
   const db = await database();
