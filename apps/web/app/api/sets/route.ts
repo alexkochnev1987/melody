@@ -4,9 +4,18 @@ import { database } from '@/lib/db';
 import { getAuth } from '@/lib/auth';
 import { createGame } from '@/lib/game';
 import { songInput } from '@/lib/song-input';
+import { replaceSongHints } from '@/lib/replace-song-hints';
 
 const song = songInput;
+const hintUpdate = z.object({
+  index: z.number().int().min(0).max(99),
+  title: z.string().min(1).max(120),
+  artist: z.string().min(1).max(120),
+  youtubeId: z.string().max(40),
+  hints: z.array(z.string().trim().min(1).max(220)).max(3),
+});
 const bodySchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('saveHints'), id: z.string().min(1), updates: z.array(hintUpdate).min(1).max(100) }),
   z.object({ action: z.literal('save'), id: z.string().optional(), title: z.string().trim().min(1).max(100), description: z.string().max(500), songs: z.array(song).max(100) }),
   z.object({ action: z.literal('copy'), id: z.string().min(1) }),
   z.object({ action: z.literal('start'), id: z.string().min(1) }),
@@ -28,6 +37,25 @@ export async function POST(req: Request) {
     if (!session) return json({ error: 'Сначала войдите в аккаунт' }, 401);
     const body = bodySchema.parse(await req.json());
     const db = await database();
+    if (body.action === 'saveHints') {
+      return db.transaction(async tx => {
+        const stored = (await tx.query<Pick<GameSet, 'songs'>>(
+          'SELECT songs FROM game_sets WHERE id=$1 AND owner_id=$2 FOR UPDATE',
+          [body.id, session.user.id],
+        )).rows[0];
+        if (!stored) return json({ error: 'Игра не найдена или нет доступа' }, 403);
+        let updated: Song[];
+        try {
+          updated = replaceSongHints(stored.songs, body.updates);
+        } catch (error) {
+          return json({ error: error instanceof Error ? error.message : 'Список песен изменился' }, 409);
+        }
+        await tx.query('UPDATE game_sets SET songs=$3, updated_at=now() WHERE id=$1 AND owner_id=$2', [
+          body.id, session.user.id, JSON.stringify(updated),
+        ]);
+        return json({ updated: body.updates.length });
+      });
+    }
     if (body.action === 'save') {
       if (!body.id) {
         const id = randomUUID();

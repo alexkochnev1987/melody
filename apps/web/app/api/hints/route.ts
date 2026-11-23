@@ -3,6 +3,7 @@ import { generateText, Output } from 'ai';
 import { z } from 'zod';
 import { getAuth } from '@/lib/auth';
 import { database } from '@/lib/db';
+import { generatedHintsSchema, cleanGeneratedHints } from '@/lib/generated-hints';
 
 const input = z.object({
   songs: z.array(z.object({
@@ -11,17 +12,6 @@ const input = z.object({
     category: z.string().trim().min(1).max(60),
   })).min(1).max(30),
 });
-const resultSchema = z.object({
-  songs: z.array(z.object({
-    index: z.number().int(),
-    hints: z.tuple([z.string().min(1).max(220), z.string().min(1).max(220), z.string().min(1).max(220)]),
-  })),
-});
-const normalize = (text: string) => text.toLocaleLowerCase('ru').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
-const leaksAnswer = (hint: string, title: string, artist: string) => {
-  const text = normalize(hint);
-  return [title, artist].some(secret => normalize(secret).length >= 3 && text.includes(normalize(secret)));
-};
 
 export async function POST(req: Request) {
   try {
@@ -42,7 +32,7 @@ export async function POST(req: Request) {
     const provider = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const generated = await generateText({
       model: provider('gpt-5.4-mini'),
-      output: Output.object({ schema: resultSchema }),
+      output: Output.object({ schema: generatedHintsSchema }),
       system: `Ты пишешь ОРИГИНАЛЬНЫЕ юмористические подсказки для домашней музыкальной викторины.
 У каждой песни три уровня: 1) почти чистая шутка, крайне туманно; 2) забавный намёк на тему или атмосферу; 3) узнаваемый, но всё ещё непрямой намёк.
 Юмор важнее точного ответа. Не используй название, имя исполнителя, буквальные строки песни, даты релизов, цитаты, явно выдающие ответ, или непроверенные факты. Основывайся на общеизвестной тематике, не выдумывай подробности текста. Каждая подсказка: одно короткое предложение, русский язык, без спойлеров.
@@ -54,8 +44,9 @@ export async function POST(req: Request) {
     const byIndex = new Map(generated.output.songs.map(item => [item.index, item.hints]));
     const results = songs.map((song, index) => {
       const hints = byIndex.get(index);
-      const valid = hints && hints.every(h => !leaksAnswer(h, song.title, song.artist));
-      return { index, hints: valid ? hints : [], needsReview: true, ...(valid ? {} : { warning: 'Подсказки не прошли проверку; попробуйте перегенерировать' }) };
+      const cleaned = cleanGeneratedHints(hints, song.title, song.artist);
+      return { index, hints: cleaned ?? [], needsReview: true,
+        ...(!cleaned ? { warning: 'Подсказки не прошли проверку; попробуйте перегенерировать' } : {}) };
     });
     return Response.json({ songs: results }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
