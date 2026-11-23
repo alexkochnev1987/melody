@@ -3,8 +3,8 @@ import { z } from 'zod';
 import { database } from '@/lib/db';
 import { applyCommand, createGame, publicGame, type Game, type Command } from '@/lib/game';
 import { getAuth } from '@/lib/auth';
+import { songInput } from '@/lib/song-input';
 
-const songInput = z.object({ title: z.string().trim().min(1).max(120), artist: z.string().trim().min(1).max(120), youtubeId: z.string().regex(/^[\w-]{11}$/), points: z.number().int().min(0).max(100000), startSeconds: z.number().int().min(0).max(86400).default(0) });
 const requestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('create'), songs: z.array(songInput).min(1).max(100) }),
   z.object({ action: z.literal('join'), room: z.string().length(6), name: z.string().trim().min(1).max(40) }),
@@ -14,6 +14,9 @@ const requestSchema = z.discriminatedUnion('action', [
     z.object({ type: z.literal('judge'), id: z.string().uuid(), correct: z.boolean(), playerId: z.string().optional() }),
     z.object({ type: z.literal('resume'), id: z.string().uuid() }),
     z.object({ type: z.literal('adjust'), id: z.string().uuid(), playerId: z.string(), delta: z.number().int(), reason: z.string() }),
+    z.object({ type: z.literal('choose'), id: z.string().uuid(), songId: z.string().uuid() }),
+    z.object({ type: z.literal('hint'), id: z.string().uuid() }),
+    z.object({ type: z.literal('skip'), id: z.string().uuid() }),
     z.object({ type: z.literal('next'), id: z.string().uuid() }),
   ]) }),
 ]);
@@ -28,7 +31,9 @@ export async function GET(req: Request) {
   const db = await database();
   const row = (await db.query<Row>('SELECT state, host_token FROM rooms WHERE id = $1', [room])).rows[0];
   if (!row) return reply({ error: 'Комната не найдена' }, 404);
-  return reply(token(req) && token(req) === row.host_token ? { ...publicGame(row.state), hostSong: row.state.songs[row.state.songIndex] } : publicGame(row.state));
+  return reply(token(req) && token(req) === row.host_token
+    ? { ...publicGame(row.state), hostSong: row.state.songs[row.state.songIndex] }
+    : publicGame(row.state));
 }
 
 export async function POST(req: Request) {
@@ -40,7 +45,7 @@ export async function POST(req: Request) {
       if (!session) return reply({ error: 'Чтобы создать комнату, войдите через Google в разделе «Мои игры».' }, 401);
       const room = randomBytes(4).toString('hex').slice(0, 6).toUpperCase();
       const hostToken = secret();
-      const game = createGame(room, body.songs.map(s => ({ ...s, id: randomUUID() })));
+      const game = createGame(room, body.songs.map(s => ({ ...s, id: randomUUID() })), session.user.id);
       await db.query('INSERT INTO rooms (id, host_token, state) VALUES ($1,$2,$3)', [room, hostToken, JSON.stringify(game)]);
       return reply({ room, token: hostToken }, 201);
     }
@@ -55,10 +60,18 @@ export async function POST(req: Request) {
         return reply({ room: body.room, token: playerToken, playerId });
       }
       let command: Command;
-      if (body.command.type === 'buzz') {
-        const p = (await tx.query<{ player_id: string }>('SELECT player_id FROM room_players WHERE room_id=$1 AND token=$2', [body.room, token(req)])).rows[0];
-        if (!p) return reply({ error: 'Нет доступа игрока' }, 403);
-        command = { ...body.command, playerId: p.player_id };
+      if (body.command.type === 'buzz' || body.command.type === 'choose') {
+        const isHost = token(req) && token(req) === row.host_token;
+        if (body.command.type === 'choose' && isHost) {
+          command = body.command;
+        } else {
+          const player = (await tx.query<{ player_id: string }>(
+            'SELECT player_id FROM room_players WHERE room_id=$1 AND token=$2',
+            [body.room, token(req)],
+          )).rows[0];
+          if (!player) return reply({ error: 'Нет доступа игрока' }, 403);
+          command = { ...body.command, playerId: player.player_id };
+        }
       } else {
         if (!token(req) || token(req) !== row.host_token) return reply({ error: 'Нет доступа ведущего' }, 403);
         command = body.command;
