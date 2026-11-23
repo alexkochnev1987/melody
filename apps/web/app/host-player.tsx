@@ -5,7 +5,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 declare global { interface Window { onYouTubeIframeAPIReady?: () => void } }
 
 export type HostPlayerHandle = { play: () => boolean; pause: () => void };
-type Props = { videoId: string; startSeconds: number; onReady: (ready: boolean) => void; onPlaybackBlocked: () => void; onError: () => void };
+type Props = { videoId: string; startSeconds: number; onReady: (ready: boolean) => void; onPlaybackChange: (playing: boolean) => void; onPlaybackBlocked: () => void; onError: () => void };
 
 let apiPromise: Promise<void> | undefined;
 function loadYouTube(): Promise<void> {
@@ -22,7 +22,7 @@ function loadYouTube(): Promise<void> {
   return apiPromise;
 }
 
-const HostPlayer = forwardRef<HostPlayerHandle, Props>(function HostPlayer({ videoId, startSeconds, onReady, onPlaybackBlocked, onError }, ref) {
+const HostPlayer = forwardRef<HostPlayerHandle, Props>(function HostPlayer({ videoId, startSeconds, onReady, onPlaybackChange, onPlaybackBlocked, onError }, ref) {
   const container = useRef<HTMLDivElement>(null);
   const player = useRef<YT.Player | null>(null);
   const ready = useRef(false);
@@ -33,6 +33,7 @@ const HostPlayer = forwardRef<HostPlayerHandle, Props>(function HostPlayer({ vid
   useEffect(() => {
     let active = true;
     ready.current = false;
+    onPlaybackChange(false);
     loadYouTube().then(() => {
       if (!active || !container.current) return;
       const node = document.createElement('div');
@@ -42,16 +43,17 @@ const HostPlayer = forwardRef<HostPlayerHandle, Props>(function HostPlayer({ vid
         playerVars: { start: startSeconds, playsinline: 1, origin: window.location.origin },
         events: {
           onReady: () => { if (active) { ready.current = true; onReady(true); } },
-          onAutoplayBlocked: () => { if (active) onPlaybackBlocked(); },
-          onError: () => { if (active) onError(); },
+          onStateChange: event => { if (active) onPlaybackChange(event.data === 1); },
+          onAutoplayBlocked: () => { if (active) { onPlaybackChange(false); onPlaybackBlocked(); } },
+          onError: () => { if (active) { onPlaybackChange(false); onError(); } },
         },
       });
-    }).catch(() => { if (active) onError(); });
+    }).catch(() => { if (active) { onPlaybackChange(false); onError(); } });
     return () => {
-      active = false; ready.current = false; onReady(false);
+      active = false; ready.current = false; onReady(false); onPlaybackChange(false);
       player.current?.destroy(); player.current = null;
     };
-  }, [videoId, startSeconds, onReady, onPlaybackBlocked, onError]);
+  }, [videoId, startSeconds, onReady, onPlaybackChange, onPlaybackBlocked, onError]);
   return <div className="video" ref={container} aria-label="YouTube плеер" />;
 });
 export default HostPlayer;
