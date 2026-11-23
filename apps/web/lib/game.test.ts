@@ -122,3 +122,15 @@ test('stale YouTube events cannot activate a new song', () => {
   game = cmd(game, { type: 'playback', id: 'second-sound', songId: 'b', active: true });
   assert.equal(game.playbackActive, true);
 });
+
+test('heartbeat lease expires on host disconnect and is renewed on PLAYING', () => {
+  let game = playing();
+  game.playbackConfirmedAt = new Date(Date.now() - 13000).toISOString();
+  assert.equal(publicGame(game).playbackActive, false);
+  assert.throws(() => cmd(game, { type: 'buzz', id: 'stale-buzz', songId: 'a', playerId: 'one' }));
+  game = cmd(game, { type: 'playback', id: 'heartbeat', songId: 'a', active: true });
+  assert.equal(publicGame(game).playbackActive, true);
+  game = cmd(game, { type: 'buzz', id: 'after-heartbeat', songId: 'a', playerId: 'one' });
+  assert.equal(game.status, 'buzzed');
+  assert.equal(publicGame(game).playbackActive, false);
+});
