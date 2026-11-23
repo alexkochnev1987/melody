@@ -110,8 +110,8 @@ export default function Admin() {
       const games: HistoricGame[] = [];
       let offset: number | null = 0;
       while (offset !== null) {
-        const res = await fetch(`/api/history?offset=${offset}`, { cache: 'no-store' });
-        const data = await res.json();
+        const res: Response = await fetch(`/api/history?offset=${offset}`, { cache: 'no-store' });
+        const data: { games: HistoricGame[]; nextOffset: number | null; error?: string } = await res.json();
         if (!res.ok) throw new Error(data.error || 'Не удалось выгрузить историю игр');
         games.push(...(data.games as HistoricGame[]));
         offset = typeof data.nextOffset === 'number' ? data.nextOffset : null;
