@@ -5,8 +5,11 @@ export type PlayerSnapshot = {
   totalRounds: number;
   players: { id: string; name: string; score: number }[];
   winnerId: string | null;
+  chooserId?: string | null;
+  board?: { id: string; category: string; points: number; played: boolean; selected: boolean }[];
+  revealedHints?: string[];
   blockedPlayerIds: string[];
-  song: { id: string; points: number; title?: string; artist?: string };
+  song: { id: string; points: number; availablePoints?: number; title?: string; artist?: string };
 };
 
 export type PlayerView = {
@@ -66,6 +69,14 @@ export function getPlayerView(state: PlayerSnapshot, playerId: string, connected
         buttonLabel: 'ТВОЙ ХОД', buttonHint: 'Отвечай вслух' }
     : { ...base, title: 'Отвечает другой игрок', description: 'Жди решения ведущего. Раунд ещё может продолжиться.',
         buttonLabel: 'ЖДЁМ', buttonHint: 'Сейчас не твой ход' };
+  if (state.status === 'selected') return {
+    ...base, title: 'Песня выбрана!', description: 'Ведущий готовит музыку. Скоро начнём.',
+    buttonLabel: 'СКОРО', buttonHint: 'Ожидаем ведущего',
+  };
+  if (state.status === 'revealed' && state.chooserId === playerId) return {
+    ...base, title: 'Теперь твой выбор!', description: 'Выбери категорию и стоимость следующей песни.',
+    buttonLabel: 'ВЫБОР', buttonHint: 'Выбирай следующую песню',
+  };
   if (state.status === 'revealed') return {
     ...base, title: 'Раунд завершён', description: 'Проверь очки — впереди следующая песня.',
     buttonLabel: 'ГОТОВО', buttonHint: 'Ожидаем следующий раунд',

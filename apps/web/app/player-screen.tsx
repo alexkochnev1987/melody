@@ -1,6 +1,7 @@
 'use client';
 
 import { getPlayerView, type PlayerSnapshot } from '@/lib/player-view';
+import SongBoard from './song-board';
 
 type Props = {
   state: PlayerSnapshot;
@@ -9,10 +10,12 @@ type Props = {
   connected: boolean;
   busy: boolean;
   onBuzz: () => void;
+  onChoose: (songId: string) => void;
 };
 
-export default function PlayerScreen({ state, playerId, room, connected, busy, onBuzz }: Props) {
+export default function PlayerScreen({ state, playerId, room, connected, busy, onBuzz, onChoose }: Props) {
   const view = getPlayerView(state, playerId, connected, busy);
+  const choosing = state.status === 'revealed' && state.chooserId === playerId;
   const onStop = () => {
     if (!view.canBuzz) return;
     if (typeof navigator.vibrate === 'function') navigator.vibrate(25);
@@ -45,13 +48,21 @@ export default function PlayerScreen({ state, playerId, room, connected, busy, o
       </div>
 
       <div className="player-screen__center" aria-live="polite" aria-atomic="true">
-        <span className="player-screen__round">РАУНД {state.round} ИЗ {state.totalRounds} · {state.song.points} ОЧКОВ</span>
+        <span className="player-screen__round">РАУНД {state.round} ИЗ {state.totalRounds} · {state.song.availablePoints ?? state.song.points} ОЧКОВ</span>
         <h1>{view.title}</h1>
         <p>{view.description}</p>
         {view.answer && <div className="player-screen__answer"><span>ПРАВИЛЬНЫЙ ОТВЕТ</span><strong>{view.answer}</strong></div>}
+        {state.revealedHints && state.revealedHints.length > 0 && !choosing &&
+          <div className="player-screen__hints">
+            {state.revealedHints.map((hint, i) => <p key={i}>💡 {hint}</p>)}
+          </div>
+        }
+        {choosing && <div className="player-screen__picker">
+          <SongBoard songs={state.board ?? []} disabled={busy || !connected} onChoose={onChoose} />
+        </div>}
       </div>
 
-      <div className="player-screen__action">
+      {!choosing && <div className="player-screen__action">
         <button
           type="button"
           className={`player-screen__stop${view.canBuzz ? ' player-screen__stop--active' : ''}`}
@@ -62,7 +73,7 @@ export default function PlayerScreen({ state, playerId, room, connected, busy, o
           <strong>{view.buttonLabel}</strong>
           <span>{view.buttonHint}</span>
         </button>
-      </div>
+      </div>}
     </section>
   );
 }
