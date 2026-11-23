@@ -10,7 +10,7 @@ The Google OAuth client needs this redirect URI for each deployed hostname:
 
     https://<your-hostname>/api/auth/callback/google
 
-Set BETTER_AUTH_URL to the exact application origin, such as https://melody.vercel.app. Use a long random BETTER_AUTH_SECRET. The AI and YouTube keys are server-side only.
+Locally, BETTER_AUTH_URL defaults to http://localhost:3000. On Vercel, the app uses the production or preview deployment URL automatically. Set BETTER_AUTH_URL explicitly if you use a custom domain. Use a long random BETTER_AUTH_SECRET. The AI and YouTube keys are server-side only.
 
 ## Database
 
