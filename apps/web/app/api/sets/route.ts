@@ -3,8 +3,9 @@ import { z } from 'zod';
 import { database } from '@/lib/db';
 import { getAuth } from '@/lib/auth';
 import { createGame } from '@/lib/game';
+import { songInput } from '@/lib/song-input';
 
-const song = z.object({ title: z.string().trim().min(1).max(120), artist: z.string().trim().min(1).max(120), youtubeId: z.string().regex(/^[\w-]{11}$/), points: z.number().int().min(0).max(100000), startSeconds: z.number().int().min(0).max(86400).default(0) });
+const song = songInput;
 const bodySchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('save'), id: z.string().optional(), title: z.string().trim().min(1).max(100), description: z.string().max(500), songs: z.array(song).max(100) }),
   z.object({ action: z.literal('copy'), id: z.string().min(1) }),
@@ -47,7 +48,7 @@ export async function POST(req: Request) {
     const songs = z.array(song).min(1).parse(selected.songs);
     const room = randomBytes(4).toString('hex').slice(0, 6).toUpperCase();
     const hostToken = randomBytes(32).toString('base64url');
-    const game = createGame(room, songs.map(s => ({ ...s, id: randomUUID() })));
+    const game = createGame(room, songs.map(s => ({ ...s, id: randomUUID() })), session.user.id);
     await db.query('INSERT INTO rooms(id,host_token,state) VALUES ($1,$2,$3)', [room, hostToken, JSON.stringify(game)]);
     return json({ room, token: hostToken }, 201);
   } catch (err) {

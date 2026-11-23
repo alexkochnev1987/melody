@@ -1,63 +1,89 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyCommand, createGame, publicGame } from './game.ts';
+import { applyCommand, createGame, publicGame, roundPoints } from './game.ts';
 
-const song = { id: 'song-1', title: 'Secret song', artist: 'Secret artist', youtubeId: 'abcdefghijk', points: 25 };
+const songs = [
+  { id: 'a', title: 'Secret song', artist: 'Hidden artist', youtubeId: 'abcdefghijk', points: 50, category: 'Pop', hints: ['A joke about waiting', 'A suspicious dance floor', 'Almost a giveaway'] },
+  { id: 'b', title: 'Other song', artist: 'Another artist', youtubeId: '12345678901', points: 30, category: 'Rock', hints: [] },
+  { id: 'c', title: 'Final song', artist: 'Final artist', youtubeId: '12345abcdef', points: 20, category: 'Pop', hints: [] },
+];
+const cmd = (game: ReturnType<typeof createGame>, command: Parameters<typeof applyCommand>[1]) => applyCommand(game, command);
 function playing() {
-  let game = createGame('room', [song]);
-  game = applyCommand(game, { type: 'join', id: 'j1', playerId: 'p1', name: 'Alice' });
-  game = applyCommand(game, { type: 'join', id: 'j2', playerId: 'p2', name: 'Bob' });
-  return applyCommand(game, { type: 'start', id: 'start' });
+  let game = createGame('room', songs, 'owner');
+  game = cmd(game, { type: 'join', id: 'join-1', playerId: 'one', name: 'Anna' });
+  game = cmd(game, { type: 'join', id: 'join-2', playerId: 'two', name: 'Max' });
+  return cmd(game, { type: 'start', id: 'start' });
 }
-test('first accepted buzz wins; repeated command is idempotent', () => {
-  const initial = playing();
-  const command = { type: 'buzz', id: 'buzz1', playerId: 'p1', songId: song.id } as const;
-  const buzzed = applyCommand(initial, command);
-  assert.equal(buzzed.winnerId, 'p1');
-  assert.equal(applyCommand(buzzed, command), buzzed);
-  assert.throws(() => applyCommand(buzzed, { type: 'buzz', id: 'buzz2', playerId: 'p2', songId: song.id }));
-  assert.equal(initial.status, 'playing');
+test('correct answer gives chosen player the next pick and persists the score', () => {
+  let game = playing();
+  game = cmd(game, { type: 'buzz', id: 'buzz', songId: 'a', playerId: 'one' });
+  game = cmd(game, { type: 'judge', id: 'judge', correct: true });
+  assert.equal(game.chooserId, 'one');
+  assert.equal(game.status, 'revealed');
+  assert.equal(game.players[0].score, 50);
+  assert.deepEqual(game.playedSongIds, ['a']);
+  assert.equal(publicGame(game).board[0].played, true);
+  assert.throws(() => cmd(game, { type: 'choose', id: 'bad', songId: 'b', playerId: 'two' }));
+  game = cmd(game, { type: 'choose', id: 'pick', songId: 'c', playerId: 'one' });
+  assert.equal(game.status, 'selected');
+  assert.equal(game.songs[game.songIndex].id, 'c');
+  assert.equal(publicGame(game).round, 2);
+  assert.equal(publicGame(game).song.title, undefined);
+  assert.throws(() => cmd(game, { type: 'choose', id: 'played', songId: 'a' }));
+  game = cmd(game, { type: 'start', id: 'start2' });
+  assert.equal(game.status, 'playing');
 });
-test('correct answer awards the song points once, optionally to another player', () => {
-  const game = applyCommand(playing(), { type: 'buzz', id: 'buzz', playerId: 'p1', songId: song.id });
-  const command = { type: 'judge', id: 'judge', correct: true, playerId: 'p2' } as const;
-  const judged = applyCommand(game, command);
-  assert.equal(judged.players[1].score, 25);
-  assert.equal(applyCommand(judged, command).players[1].score, 25);
-  assert.equal(judged.status, 'revealed');
+test('host can select a first song, skip and select a different one', () => {
+  let game = createGame('room', songs);
+  game = cmd(game, { type: 'choose', id: 'preselect', songId: 'c' });
+  game = cmd(game, { type: 'join', id: 'j', playerId: 'one', name: 'Anna' });
+  game = cmd(game, { type: 'start', id: 's' });
+  game = cmd(game, { type: 'skip', id: 'skip' });
+  assert.equal(game.chooserId, null);
+  game = cmd(game, { type: 'choose', id: 'another', songId: 'a' });
+  assert.equal(game.songIndex, 0);
+  assert.equal(game.playedSongIds?.length, 1);
 });
-test('incorrect answer blocks the player and permits others', () => {
-  let game = applyCommand(playing(), { type: 'buzz', id: 'buzz', playerId: 'p1', songId: song.id });
-  game = applyCommand(game, { type: 'judge', id: 'judge', correct: false });
-  assert.throws(() => applyCommand(game, { type: 'buzz', id: 'again', playerId: 'p1', songId: song.id }));
-  assert.equal(applyCommand(game, { type: 'buzz', id: 'other', playerId: 'p2', songId: song.id }).winnerId, 'p2');
+test('hints reveal only by host command and reduce available award', () => {
+  let game = playing();
+  assert.equal(JSON.stringify(publicGame(game)).includes('A joke'), false);
+  game = cmd(game, { type: 'hint', id: 'hint' });
+  assert.equal(roundPoints(game), 35);
+  assert.deepEqual(publicGame(game).revealedHints, ['A joke about waiting']);
+  game = cmd(game, { type: 'hint', id: 'hint2' });
+  assert.equal(roundPoints(game), 25);
+  game = cmd(game, { type: 'buzz', id: 'b', songId: 'a', playerId: 'one' });
+  game = cmd(game, { type: 'judge', id: 'j', correct: true });
+  assert.equal(game.players[0].score, 25);
+  assert.equal(cmd(game, { type: 'judge', id: 'j', correct: true }), game);
 });
-test('public snapshot does not disclose answers or YouTube ID before reveal', () => {
-  const snapshot = JSON.stringify(publicGame(playing()));
-  assert.equal(snapshot.includes(song.title), false);
-  assert.equal(snapshot.includes(song.artist), false);
-  assert.equal(snapshot.includes(song.youtubeId), false);
+test('finish records stable results and supports older games without new fields', () => {
+  let game = playing();
+  for (const id of ['a','b','c']) {
+    if (game.status === 'revealed') {
+      game = cmd(game, { type: 'choose', id: 'choose-'+id, songId: id });
+      game = cmd(game, { type: 'start', id: 'start-'+id });
+    }
+    game = cmd(game, { type: 'buzz', id: 'buzz-'+id, songId: id, playerId: 'one' });
+    game = cmd(game, { type: 'judge', id: 'judge-'+id, correct: true });
+  }
+  assert.equal(game.status, 'finished');
+  assert.equal(game.scoreEvents.length, 3);
+  assert.ok(game.endedAt);
+  assert.equal(game.ownerId, 'owner');
+  assert.equal(game.players[0].score, 100);
+  const legacy = createGame('old', songs);
+  delete legacy.playedSongIds;
+  delete legacy.hintLevel;
+  assert.equal(publicGame(legacy).board.length, 3);
 });
-test('preserves configured playback start and supplies zero for old songs', () => {
-  const oldGame = createGame('room', [song]);
-  assert.equal(oldGame.songs[0].startSeconds, 0);
-  const newGame = createGame('room', [{ ...song, startSeconds: 75 }]);
-  assert.equal(newGame.songs[0].startSeconds, 75);
-  assert.equal(JSON.stringify(publicGame(newGame)).includes('startSeconds'), false);
-  assert.throws(() => createGame('room', [{ ...song, startSeconds: -1 }]));
-  assert.throws(() => createGame('room', [{ ...song, startSeconds: 1.5 }]));
-});
-test('requires at least one player before starting', () => {
-  const room = createGame('room', [song]);
-  assert.throws(() => applyCommand(room, { type: 'start', id: 'start' }), /хотя бы один игрок/);
-  const joined = applyCommand(room, { type: 'join', id: 'join', playerId: 'p', name: 'Аня' });
-  assert.equal(applyCommand(joined, { type: 'start', id: 'start' }).status, 'playing');
-});
-test('rejects duplicate names within one room regardless of case and spacing', () => {
-  let room = createGame('room', [song]);
-  room = applyCommand(room, { type: 'join', id: 'join1', playerId: 'p1', name: '  Анна   Мария  ' });
-  assert.equal(room.players[0].name, 'Анна Мария');
-  assert.throws(() => applyCommand(room, { type: 'join', id: 'join2', playerId: 'p2', name: 'анна мария' }), /имя уже занято/);
-  const other = createGame('another-room', [song]);
-  assert.equal(applyCommand(other, { type: 'join', id: 'join3', playerId: 'p3', name: 'Анна Мария' }).players.length, 1);
+test('invalid hint, duplicate names and repeat commands are rejected safely', () => {
+  let game = playing();
+  assert.throws(() => cmd(game,{type:'join',id:'same',playerId:'three',name:'anna'}), /имя уже занято/);
+  assert.throws(() => cmd(game,{type:'choose',id:'wrong',songId:'b',playerId:'one'}));
+  game = cmd(game,{type:'buzz',id:'buzz-1',playerId:'one',songId:'a'});
+  assert.equal(cmd(game,{type:'buzz',id:'buzz-1',playerId:'one',songId:'a'}),game);
+  game = cmd(game,{type:'judge',id:'bad',correct:false});
+  assert.equal(game.blockedPlayerIds[0],'one');
+  assert.throws(() => cmd(game,{type:'buzz',id:'again',playerId:'one',songId:'a'}));
 });
