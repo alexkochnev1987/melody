@@ -144,7 +144,7 @@ export default function Home() {
     } catch (err) { setError(err instanceof Error ? err.message : 'Ошибка подсказок'); }
     finally { setBusy(false); }
   }
-  const stop = () { localStorage.removeItem('melody-session'); setSession(null); setState(null); window.history.replaceState(null, '', '/'); };
+  const stop = () => { localStorage.removeItem('melody-session'); setSession(null); setState(null); window.history.replaceState(null, '', '/'); };
   const winner = state?.players.find(p => p.id === state.winnerId);
   const share = inviteOrigin && session ? `${inviteOrigin}/?room=${encodeURIComponent(session.room)}` : '';
   const invalidAiCount = !Number.isInteger(aiCount) || aiCount < 1 || aiCount > 30;
@@ -161,7 +161,7 @@ export default function Home() {
       {song.verification === 'unavailable' && <p className="hint">Не удалось проверить видео в YouTube. Попробуй позже или добавь его вручную.</p>}
       {song.title && <a className="search-link" target="_blank" rel="noreferrer" href={`https://www.youtube.com/results?search_query=${encodeURIComponent(song.artist + ' ' + song.title)}`}>Найти видео на YouTube</a>}
       <label>Категория<input maxLength={60} value={song.category} onChange={e => setSongs(songs.map((s,i) => i === index ? { ...s, category: e.target.value } : s))} placeholder="Например, Поп, Рок, 2000-е" /></label>
-      <div className="hint-editor"><h3>Шуточные подсказки</h3>{[0,1,2].map(n => <input key={n} maxLength={220} aria-label={`Подсказка ${n+1} для песни ${index+1}`} placeholder={`Подсказка ${n+1}`} value={song.hints[n] ?? ''} onChange={e => setSongs(songs.map((s,i) => i === index ? { ...s, hints: Array.from({ length: 3 }, (_,j) => j === n ? e.target.value : s.hints[j] ?? '') } : s))} />)}</div>
+      <div className="hint-editor"><h3>Шуточные подсказки</h3>{[0,1,2].map(n => <input key={n} maxLength={220} aria-label={`Подсказка ${n+1} для песни ${index+1}`} placeholder={`Подсказка ${n+1}`} value={song.hints[n] ?? ''} onChange={e => setSongs(songs.map((s,i) => i === index ? { ...s, hints: Array.from({ length: 3 }, (_,j) => j === n ? e.target.value : s.hints[j] ?? '').filter(Boolean) } : s))} />)}</div>
       <label>Баллы<input type="number" min="0" max="100000" value={song.points} onChange={e => setSongs(songs.map((s, i) => i === index ? { ...s, points: Number(e.target.value) } : s))} /></label></div>)}<button className="secondary" onClick={() => setSongs([...songs, emptySong()])}>+ Добавить песню</button><button className="secondary" disabled={busy || songs.length > 30} onClick={generateHints}>✦ Сгенерировать смешные подсказки</button><button disabled={busy} onClick={create}>Создать комнату</button></section></div></div>
       : !state ? <div className="panel">Подключаемся к комнате…</div>
       : session.role === 'player'
