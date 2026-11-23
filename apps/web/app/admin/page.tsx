@@ -105,14 +105,25 @@ export default function Admin() {
       if (failed) setError(`Подсказки для ${failed} песен не прошли проверку. Перегенерируй или отредактируй их вручную.`);
     });
   }
-  function downloadHistory() {
-    const exportData = JSON.stringify({ exportedAt: new Date().toISOString(), games: history }, null, 2);
-    const url = URL.createObjectURL(new Blob([exportData], { type: 'application/json' }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `melody-history-${new Date().toISOString().slice(0,10)}.json`;
-    link.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  async function downloadHistory() {
+    await perform(async () => {
+      const games: HistoricGame[] = [];
+      let offset: number | null = 0;
+      while (offset !== null) {
+        const res = await fetch(`/api/history?offset=${offset}`, { cache: 'no-store' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Не удалось выгрузить историю игр');
+        games.push(...(data.games as HistoricGame[]));
+        offset = typeof data.nextOffset === 'number' ? data.nextOffset : null;
+      }
+      const exportData = JSON.stringify({ exportedAt: new Date().toISOString(), games }, null, 2);
+      const url = URL.createObjectURL(new Blob([exportData], { type: 'application/json' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `melody-history-${new Date().toISOString().slice(0,10)}.json`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
   }
   const readonly = editing?.owner_id === null;
   const invalidCount = !Number.isInteger(count) || count < 1 || count > 30;
