@@ -19,6 +19,7 @@ export type Game = {
   hintLevel?: number;
   /** Confirmed by host-side YouTube player; reset at every round boundary. */
   playbackActive?: boolean;
+  playbackConfirmedAt?: string;
   ownerId?: string;
   startedAt?: string;
   endedAt?: string;
@@ -38,6 +39,13 @@ export type Command =
   | { type: 'next'; id: string };
 
 export const MAX_HINTS = 3;
+/** Expire stale host playback confirmation after the tab disconnects. */
+export const PLAYBACK_LEASE_MS = 12000;
+export function hasActivePlayback(game: Game, now = Date.now()): boolean {
+  const confirmedAt = Date.parse(game.playbackConfirmedAt ?? '');
+  return game.playbackActive === true && Number.isFinite(confirmedAt) &&
+    confirmedAt <= now && now - confirmedAt < PLAYBACK_LEASE_MS;
+}
 const hintFactors = [1, 0.7, 0.5, 0.3];
 
 export function playedIds(game: Game): string[] {
@@ -121,7 +129,7 @@ export function applyCommand(game: Game, command: Command): Game {
       break;
     case 'buzz':
       player(command.playerId);
-      if (next.status !== 'playing' || !next.playbackActive || command.songId !== song.id || next.blockedPlayerIds.includes(command.playerId)) throw new Error('Нажатие недоступно');
+      if (next.status !== 'playing' || !hasActivePlayback(next) || command.songId !== song.id || next.blockedPlayerIds.includes(command.playerId)) throw new Error('Нажатие недоступно');
       next.status = 'buzzed'; next.winnerId = command.playerId; next.playbackActive = false;
       break;
     case 'judge':
@@ -164,6 +172,7 @@ export function applyCommand(game: Game, command: Command): Game {
       if (command.active && next.status !== 'playing') throw new Error('Нельзя включить STOP до начала раунда');
       // A stale pause event may arrive after the round was revealed; it cannot reactivate STOP.
       next.playbackActive = command.active && next.status === 'playing';
+      next.playbackConfirmedAt = next.playbackActive ? new Date().toISOString() : undefined;
       break;
     }
     case 'hint':
@@ -208,7 +217,7 @@ export function publicGame(game: Game) {
     id: game.id, revision: game.revision, status: game.status,
     round: Math.min(game.songs.length, Math.max(1, currentRound)), totalRounds: game.songs.length,
     players: game.players, winnerId: game.winnerId, chooserId: game.chooserId ?? null,
-    blockedPlayerIds: game.blockedPlayerIds, playbackActive: game.playbackActive === true,
+    blockedPlayerIds: game.blockedPlayerIds, playbackActive: hasActivePlayback(game),
     board: game.songs.map(s => ({
       id: s.id, category: s.category || 'Разное', points: s.points,
       played: played.includes(s.id), selected: s.id === song.id && game.status === 'selected',
