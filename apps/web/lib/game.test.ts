@@ -12,7 +12,8 @@ function playing() {
   let game = createGame('room', songs, 'owner');
   game = cmd(game, { type: 'join', id: 'join-1', playerId: 'one', name: 'Anna' });
   game = cmd(game, { type: 'join', id: 'join-2', playerId: 'two', name: 'Max' });
-  return cmd(game, { type: 'start', id: 'start' });
+  game = cmd(game, { type: 'start', id: 'start' });
+  return cmd(game, { type: 'playback', id: 'playback-start', songId: 'a', active: true });
 }
 test('correct answer gives chosen player the next pick and persists the score', () => {
   let game = playing();
@@ -63,6 +64,7 @@ test('finish records stable results and supports older games without new fields'
     if (game.status === 'revealed') {
       game = cmd(game, { type: 'choose', id: 'choose-'+id, songId: id });
       game = cmd(game, { type: 'start', id: 'start-'+id });
+      game = cmd(game, { type: 'playback', id: 'playback-'+id, songId: id, active: true });
     }
     game = cmd(game, { type: 'buzz', id: 'buzz-'+id, songId: id, playerId: 'one' });
     game = cmd(game, { type: 'judge', id: 'judge-'+id, correct: true });
@@ -86,4 +88,37 @@ test('invalid hint, duplicate names and repeat commands are rejected safely', ()
   game = cmd(game,{type:'judge',id:'bad',correct:false});
   assert.equal(game.blockedPlayerIds[0],'one');
   assert.throws(() => cmd(game,{type:'buzz',id:'again',playerId:'one',songId:'a'}));
+});
+
+test('STOP is rejected before playback, while paused, and after the track ends', () => {
+  let game = createGame('room', songs);
+  game = cmd(game, { type: 'join', id: 'join', playerId: 'one', name: 'Anna' });
+  assert.throws(() => cmd(game, { type: 'buzz', id: 'early', playerId: 'one', songId: 'a' }));
+  game = cmd(game, { type: 'start', id: 'start' });
+  assert.equal(publicGame(game).playbackActive, false);
+  assert.throws(() => cmd(game, { type: 'buzz', id: 'no-sound', playerId: 'one', songId: 'a' }));
+  game = cmd(game, { type: 'playback', id: 'playing', songId: 'a', active: true });
+  assert.equal(publicGame(game).playbackActive, true);
+  game = cmd(game, { type: 'playback', id: 'pause', songId: 'a', active: false });
+  assert.equal(publicGame(game).playbackActive, false);
+  assert.throws(() => cmd(game, { type: 'buzz', id: 'on-pause', playerId: 'one', songId: 'a' }));
+  game = cmd(game, { type: 'playback', id: 'resume-audio', songId: 'a', active: true });
+  game = cmd(game, { type: 'buzz', id: 'valid', playerId: 'one', songId: 'a' });
+  assert.equal(game.status, 'buzzed');
+  assert.equal(game.playbackActive, false);
+  assert.throws(() => cmd(game, { type: 'playback', id: 'late-on', songId: 'a', active: true }));
+  game = cmd(game, { type: 'judge', id: 'incorrect', correct: false });
+  assert.equal(game.playbackActive, false);
+  assert.throws(() => cmd(game, { type: 'buzz', id: 'still-paused', playerId: 'two', songId: 'a' }));
+});
+
+test('stale YouTube events cannot activate a new song', () => {
+  let game = playing();
+  game = cmd(game, { type: 'skip', id: 'skip-first' });
+  game = cmd(game, { type: 'choose', id: 'pick-second', songId: 'b' });
+  game = cmd(game, { type: 'start', id: 'start-second' });
+  assert.throws(() => cmd(game, { type: 'playback', id: 'old-song', songId: 'a', active: true }));
+  assert.equal(game.playbackActive, false);
+  game = cmd(game, { type: 'playback', id: 'second-sound', songId: 'b', active: true });
+  assert.equal(game.playbackActive, true);
 });

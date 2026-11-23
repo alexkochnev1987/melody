@@ -15,6 +15,7 @@ const requestSchema = z.discriminatedUnion('action', [
     z.object({ type: z.literal('resume'), id: z.string().uuid() }),
     z.object({ type: z.literal('adjust'), id: z.string().uuid(), playerId: z.string(), delta: z.number().int(), reason: z.string() }),
     z.object({ type: z.literal('choose'), id: z.string().uuid(), songId: z.string().uuid() }),
+    z.object({ type: z.literal('playback'), id: z.string().uuid(), songId: z.string().uuid(), active: z.boolean() }),
     z.object({ type: z.literal('hint'), id: z.string().uuid() }),
     z.object({ type: z.literal('skip'), id: z.string().uuid() }),
     z.object({ type: z.literal('next'), id: z.string().uuid() }),

@@ -5,6 +5,7 @@ export type PlayerSnapshot = {
   totalRounds: number;
   players: { id: string; name: string; score: number }[];
   winnerId: string | null;
+  playbackActive?: boolean;
   chooserId?: string | null;
   board?: { id: string; category: string; points: number; played: boolean; selected: boolean }[];
   revealedHints?: string[];
@@ -30,7 +31,7 @@ export function getPlayerView(state: PlayerSnapshot, playerId: string, connected
   const self = ranking.find(player => player.id === playerId);
   const rank = ranking.findIndex(player => player.id === playerId) + 1;
   const blocked = state.blockedPlayerIds.includes(playerId);
-  const canBuzz = connected && !busy && state.status === 'playing' && !blocked;
+  const canBuzz = connected && !busy && state.status === 'playing' && state.playbackActive === true && !blocked;
   const answer = ['revealed', 'finished'].includes(state.status) && state.song.artist && state.song.title
     ? `${state.song.artist} — ${state.song.title}`
     : null;
@@ -59,6 +60,10 @@ export function getPlayerView(state: PlayerSnapshot, playerId: string, connected
   if (state.status === 'playing' && blocked) return {
     ...base, title: 'В этот раз не угадал', description: 'Остальные могут отвечать. Твой шанс вернётся в следующем раунде.',
     buttonLabel: 'ПАУЗА', buttonHint: 'До следующей песни',
+  };
+  if (state.status === 'playing' && !state.playbackActive) return {
+    ...base, title: 'Ждём музыку', description: 'Как только ведущий включит песню, кнопка STOP станет доступной.',
+    buttonLabel: 'ЖДЁМ', buttonHint: 'Песня пока не играет',
   };
   if (state.status === 'playing') return {
     ...base, title: 'Узнал мелодию?', description: 'Жми первым, если знаешь исполнителя и название!',

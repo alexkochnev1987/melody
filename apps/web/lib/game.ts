@@ -17,6 +17,8 @@ export type Game = {
   playedSongIds?: string[];
   chooserId?: string | null;
   hintLevel?: number;
+  /** Confirmed by host-side YouTube player; reset at every round boundary. */
+  playbackActive?: boolean;
   ownerId?: string;
   startedAt?: string;
   endedAt?: string;
@@ -30,6 +32,7 @@ export type Command =
   | { type: 'resume'; id: string }
   | { type: 'adjust'; id: string; playerId: string; delta: number; reason: string }
   | { type: 'choose'; id: string; songId: string; playerId?: string }
+  | { type: 'playback'; id: string; songId: string; active: boolean }
   | { type: 'hint'; id: string }
   | { type: 'skip'; id: string }
   | { type: 'next'; id: string };
@@ -60,7 +63,7 @@ export function createGame(id: string, songs: Song[], ownerId?: string): Game {
     id, revision: 0, status: 'lobby',
     songs: songs.map(s => ({ ...s, startSeconds: s.startSeconds ?? 0, category: s.category?.trim() || 'Разное', hints: s.hints ?? [] })),
     songIndex: 0, players: [], winnerId: null, blockedPlayerIds: [],
-    scoreEvents: [], commandIds: [], playedSongIds: [], chooserId: null, hintLevel: 0,
+    scoreEvents: [], commandIds: [], playedSongIds: [], chooserId: null, hintLevel: 0, playbackActive: false,
     ...(ownerId ? { ownerId } : {}),
   };
 }
@@ -72,6 +75,7 @@ export function applyCommand(game: Game, command: Command): Game {
   next.playedSongIds = playedIds(next);
   next.chooserId ??= null;
   next.hintLevel ??= 0;
+  next.playbackActive ??= false;
   const song = next.songs[next.songIndex];
   const player = (id: string) => {
     const found = next.players.find(p => p.id === id);
@@ -92,6 +96,7 @@ export function applyCommand(game: Game, command: Command): Game {
     next.winnerId = null;
     next.blockedPlayerIds = [];
     next.chooserId = chooserId;
+    next.playbackActive = false;
     if (next.playedSongIds!.length === next.songs.length) {
       next.status = 'finished';
       next.endedAt = new Date().toISOString();
@@ -111,12 +116,13 @@ export function applyCommand(game: Game, command: Command): Game {
       if (next.status !== 'lobby' && next.status !== 'selected') throw new Error('Раунд уже начался');
       if (!next.players.length) throw new Error('Для начала игры нужен хотя бы один игрок');
       next.status = 'playing';
+      next.playbackActive = false;
       next.startedAt ??= new Date().toISOString();
       break;
     case 'buzz':
       player(command.playerId);
-      if (next.status !== 'playing' || command.songId !== song.id || next.blockedPlayerIds.includes(command.playerId)) throw new Error('Нажатие недоступно');
-      next.status = 'buzzed'; next.winnerId = command.playerId;
+      if (next.status !== 'playing' || !next.playbackActive || command.songId !== song.id || next.blockedPlayerIds.includes(command.playerId)) throw new Error('Нажатие недоступно');
+      next.status = 'buzzed'; next.winnerId = command.playerId; next.playbackActive = false;
       break;
     case 'judge':
       if (next.status !== 'buzzed' || !next.winnerId) throw new Error('Нет ответа для оценки');
@@ -128,11 +134,12 @@ export function applyCommand(game: Game, command: Command): Game {
         next.blockedPlayerIds.push(next.winnerId);
         next.winnerId = null;
         next.status = 'playing';
+        next.playbackActive = false;
       }
       break;
     case 'resume':
       if (next.status !== 'buzzed') throw new Error('Пауза недоступна');
-      next.winnerId = null; next.status = 'playing';
+      next.winnerId = null; next.status = 'playing'; next.playbackActive = false;
       break;
     case 'adjust':
       if (!command.reason.trim() || command.reason.length > 200) throw new Error('Укажите причину изменения баллов');
@@ -147,8 +154,16 @@ export function applyCommand(game: Game, command: Command): Game {
       next.status = 'selected';
       next.chooserId = null;
       next.hintLevel = 0;
+      next.playbackActive = false;
       next.winnerId = null;
       next.blockedPlayerIds = [];
+      break;
+    }
+    case 'playback': {
+      if (command.songId !== song.id) throw new Error('Сигнал воспроизведения относится к другой песне');
+      if (command.active && next.status !== 'playing') throw new Error('Нельзя включить STOP до начала раунда');
+      // A stale pause event may arrive after the round was revealed; it cannot reactivate STOP.
+      next.playbackActive = command.active && next.status === 'playing';
       break;
     }
     case 'hint':
@@ -168,6 +183,7 @@ export function applyCommand(game: Game, command: Command): Game {
       next.status = 'selected';
       next.chooserId = null;
       next.hintLevel = 0;
+      next.playbackActive = false;
       next.winnerId = null;
       next.blockedPlayerIds = [];
       break;
@@ -192,7 +208,7 @@ export function publicGame(game: Game) {
     id: game.id, revision: game.revision, status: game.status,
     round: Math.min(game.songs.length, Math.max(1, currentRound)), totalRounds: game.songs.length,
     players: game.players, winnerId: game.winnerId, chooserId: game.chooserId ?? null,
-    blockedPlayerIds: game.blockedPlayerIds,
+    blockedPlayerIds: game.blockedPlayerIds, playbackActive: game.playbackActive === true,
     board: game.songs.map(s => ({
       id: s.id, category: s.category || 'Разное', points: s.points,
       played: played.includes(s.id), selected: s.id === song.id && game.status === 'selected',

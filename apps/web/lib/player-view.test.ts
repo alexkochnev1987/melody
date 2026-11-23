@@ -5,7 +5,7 @@ import { getPlayerView, type PlayerSnapshot } from './player-view.ts';
 const base: PlayerSnapshot = {
   status: 'lobby', round: 1, totalRounds: 5,
   players: [{ id: 'one', name: 'Anna', score: 20 }, { id: 'two', name: 'Max', score: 40 }],
-  winnerId: null, blockedPlayerIds: [], song: { id: 'song', points: 30 },
+  winnerId: null, playbackActive: true, blockedPlayerIds: [], song: { id: 'song', points: 30 },
 };
 const view = (state: Partial<PlayerSnapshot> = {}, connected = true, busy = false) =>
   getPlayerView({ ...base, ...state }, 'one', connected, busy);
@@ -20,6 +20,8 @@ test('personal score and rank update without changing server state', () => {
 
 test('STOP is enabled only when the player can answer', () => {
   assert.equal(view({ status: 'playing' }).canBuzz, true);
+  assert.equal(view({ status: 'playing', playbackActive: false }).canBuzz, false);
+  assert.equal(view({ status: 'playing', playbackActive: false }).title, 'Ждём музыку');
   assert.equal(view({ status: 'playing', blockedPlayerIds: ['one'] }).canBuzz, false);
   assert.equal(view({ status: 'playing' }, false).canBuzz, false);
   assert.equal(view({ status: 'playing' }, true, true).canBuzz, false);
