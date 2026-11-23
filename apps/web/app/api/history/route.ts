@@ -2,6 +2,8 @@ import { getAuth } from '@/lib/auth';
 import { database } from '@/lib/db';
 import type { Game } from '@/lib/game';
 
+export const dynamic = 'force-dynamic';
+
 type Row = { id: string; state: Game };
 
 /**
