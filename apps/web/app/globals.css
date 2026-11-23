@@ -8,6 +8,7 @@ button.secondary { background: #292b3c; color: #fff; }
 input, select, textarea { display:block; width:100%; border:1px solid #3b3d50; border-radius:10px; background:#151623; color:#fff; padding:12px; margin:7px 0 14px; min-height:48px; }
 textarea { min-height:90px; resize:vertical; font:inherit; }
 .ai-box { padding:18px; border:1px solid #7670a2; background:#242138; border-radius:14px; margin:20px 0; }.ai-heading { font-weight:800; color:#d0c3ff; }.ai-box p { margin:10px 0; }.hint { color:#a7a7b9; font-size:13px; line-height:1.5; }.search-link { color:#c7f763; display:inline-block; margin:4px 0; }
+.field-error { color:#ff9c9c; font-size:13px; }
 .video-result { display:grid; gap:10px; padding:14px; margin:14px 0; border:1px solid #526b38; border-radius:12px; }.verified { color:#c7f763; font-size:14px; }
 .invite-qr { background:#fff; border-radius:12px; width:max-content; max-width:100%; margin:16px auto; line-height:0; }.invite-qr svg { max-width:100%; height:auto; }.invite-address { overflow-wrap:anywhere; color:#d7d7e4; font-size:14px; }
 label { display:block; color:#c9c8d8; margin-top:12px; font-size:14px; }
