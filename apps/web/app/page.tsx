@@ -44,6 +44,11 @@ export default function Home() {
   const player = useRef<HostPlayerHandle>(null);
   const [playerReady, setPlayerReady] = useState(false);
   const [playerIsPlaying, setPlayerIsPlaying] = useState(false);
+  const currentPlayback = useRef(false);
+  const handlePlaybackChange = useCallback((playing: boolean) => {
+    currentPlayback.current = playing;
+    setPlayerIsPlaying(playing);
+  }, []);
   const playbackSync = useRef<Promise<void>>(Promise.resolve());
   const latestRoom = useRef<State | null>(null);
   const [playerMessage, setPlayerMessage] = useState('');
@@ -88,23 +93,34 @@ export default function Home() {
     const poll = async () => { try { await refresh(); } catch { if (active) setConnected(false); } finally { if (active) timer = setTimeout(poll, session.role === 'player' ? 500 : 300); } };
     void poll(); return () => { active = false; clearTimeout(timer); };
   }, [session, refresh]);
-  // Serialize host playback reports so rapid Play/Pause transitions cannot arrive reversed.
-  // STOP remains disabled server-side until the YouTube player actually reports PLAYING.
-  useEffect(() => {
-    if (session?.role !== 'host' || !state || state.status !== 'playing' || state.playbackActive === playerIsPlaying) return;
-    const gameId = state.id;
-    const songId = state.song.id;
+  // Only host-reported YouTube PLAYING may arm STOP. Reports are serialized and
+  // always use the latest player state, avoiding late requests after Play/Pause.
+  const syncPlayback = useCallback((force = false) => {
+    if (session?.role !== 'host') return;
     playbackSync.current = playbackSync.current.catch(() => {}).then(async () => {
       const latest = latestRoom.current;
-      if (!latest || latest.id !== gameId || latest.song.id !== songId || latest.status !== 'playing') return;
-      if (latest.playbackActive === playerIsPlaying) return;
+      if (!latest || latest.status !== 'playing') return;
+      const active = currentPlayback.current;
+      if (!force && latest.playbackActive === active) return;
       await api({ action: 'command', room: session.room,
-        command: { type: 'playback', id: commandId(), songId, active: playerIsPlaying } }, session.token);
+        command: { type: 'playback', id: commandId(), songId: latest.song.id, active } }, session.token);
       await refresh();
     }).catch(err => {
       setPlayerMessage(err instanceof Error ? err.message : 'Не удалось синхронизировать воспроизведение');
     });
-  }, [session, state?.id, state?.status, state?.song.id, state?.playbackActive, playerIsPlaying, refresh]);
+  }, [session, refresh]);
+  useEffect(() => {
+    if (session?.role !== 'host' || !state || state.status !== 'playing' || state.playbackActive === playerIsPlaying) return;
+    syncPlayback();
+  }, [session?.role, state?.id, state?.song.id, state?.status, state?.playbackActive, playerIsPlaying, syncPlayback]);
+  // If the host goes offline, the lease expires and STOP is rejected server-side.
+  useEffect(() => {
+    if (session?.role !== 'host' || state?.status !== 'playing' || !playerIsPlaying) return;
+    const timer = window.setInterval(() => {
+      if (currentPlayback.current) syncPlayback(true);
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [session?.role, state?.status, playerIsPlaying, syncPlayback]);
   useEffect(() => {
     if (session?.role === 'host' && state?.status === 'buzzed' && lastStatus.current !== 'buzzed') {
       player.current?.pause();
@@ -189,7 +205,7 @@ export default function Home() {
       : session.role === 'player'
         ? <PlayerScreen state={state} playerId={session.playerId ?? ''} room={session.room} connected={connected} busy={busy} onBuzz={() => command({ type: 'buzz', songId: state.song.id })} onChoose={songId => command({ type: 'choose', songId })} />
         : <div className="game-grid"><section className="panel main-panel"><div className="game-top"><div><span className="eyebrow">КОМНАТА {session.room}</span><h1>{session.role === 'host' ? 'Пульт ведущего' : session.role === 'display' ? 'Играем!' : `Привет, ${state.players.find(p => p.id === session.playerId)?.name ?? 'игрок'}!`}</h1></div><span className={connected ? 'connection' : 'connection offline'}>{connected ? '● На связи' : '● Нет связи'}</span></div><p className="muted">Раунд {state.round} из {state.totalRounds} · {state.song.availablePoints ?? state.song.points} баллов</p>
-        {session.role === 'host' && state.hostSong?.youtubeId && <><div className="host-song"><strong>{state.hostSong.title}</strong><span>{state.hostSong.artist} · {state.hostSong.points} баллов · начало {state.hostSong.startSeconds ?? 0} сек.</span></div><HostPlayer ref={player} key={state.hostSong.id} videoId={state.hostSong.youtubeId} startSeconds={state.hostSong.startSeconds ?? 0} onReady={setPlayerReady} onPlaybackChange={setPlayerIsPlaying} onPlaybackBlocked={playbackBlocked} onError={playbackError} />{playerMessage && <p className="notice" role="alert">{playerMessage}</p>}</>}
+        {session.role === 'host' && state.hostSong?.youtubeId && <><div className="host-song"><strong>{state.hostSong.title}</strong><span>{state.hostSong.artist} · {state.hostSong.points} баллов · начало {state.hostSong.startSeconds ?? 0} сек.</span></div><HostPlayer ref={player} key={state.hostSong.id} videoId={state.hostSong.youtubeId} startSeconds={state.hostSong.startSeconds ?? 0} onReady={setPlayerReady} onPlaybackChange={handlePlaybackChange} onPlaybackBlocked={playbackBlocked} onError={playbackError} />{playerMessage && <p className="notice" role="alert">{playerMessage}</p>}</>}
         <div className="status">{state.status === 'lobby' ? 'Ждём игроков' : state.status === 'selected' ? 'Песня выбрана — ведущий запускает музыку' : state.status === 'playing' ? (state.playbackActive ? 'Слушаем мелодию' : 'Музыка не играет — STOP недоступен') : state.status === 'buzzed' ? `${winner?.name ?? 'Игрок'} нажал первым!` : state.status === 'revealed' ? `${state.song.artist} — ${state.song.title}` : 'Игра завершена'}</div>
         {(state.revealedHints?.length ?? 0) > 0 && <div className="host-hints">{state.revealedHints?.map((hint,i) => <p key={i}>💡 {hint}</p>)}</div>}
         {session.role === 'host' && state.status === 'playing' && (state.hostSong?.hints?.length ?? 0) > 0 && <div className="host-hints"><strong>Подсказки</strong><button className="secondary" disabled={busy || (state.hintLevel ?? 0) >= (state.hostSong?.hints?.length ?? 0)} onClick={() => command({ type: 'hint' })}>💡 Показать следующую подсказку</button><p>После подсказок за правильный ответ начисляется меньше очков.</p></div>}
