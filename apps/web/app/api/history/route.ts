@@ -15,12 +15,14 @@ export async function GET(req: Request) {
   const session = await (await getAuth()).api.getSession({ headers: req.headers });
   if (!session) return Response.json({ error: 'Сначала войдите в аккаунт' }, { status: 401 });
   const db = await database();
+  const rawOffset = Number(new URL(req.url).searchParams.get('offset') ?? '0');
+  const offset = Number.isSafeInteger(rawOffset) && rawOffset >= 0 && rawOffset <= 100000 ? rawOffset : 0;
   const rows = (await db.query<Row>(
     `SELECT id, state FROM rooms WHERE state->>'ownerId' = $1
-       ORDER BY (state->>'startedAt') DESC NULLS LAST LIMIT 50`,
-    [session.user.id],
+       ORDER BY (state->>'startedAt') DESC NULLS LAST, id DESC LIMIT 51 OFFSET $2`,
+    [session.user.id, offset],
   )).rows;
-  const games = rows.map(({ id, state }) => ({
+  const games = rows.slice(0,50).map(({ id, state }) => ({
     id,
     status: state.status,
     startedAt: state.startedAt ?? null,
@@ -30,5 +32,5 @@ export async function GET(req: Request) {
     players: [...state.players].sort((a, b) => b.score - a.score).map(({ id, name, score }) => ({ id, name, score })),
     scoreEvents: state.scoreEvents,
   }));
-  return Response.json({ games }, { headers: { 'Cache-Control': 'no-store' } });
+  return Response.json({ games, nextOffset: rows.length > 50 ? offset + 50 : null }, { headers: { 'Cache-Control': 'no-store' } });
 }
