@@ -35,6 +35,7 @@ export default function Home() {
   const [songs, setSongs] = useState<DraftSong[]>([emptySong()]);
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiCount, setAiCount] = useState(10);
+  const [startingPoints, setStartingPoints] = useState(300);
   const [previewId, setPreviewId] = useState('');
   const [error, setError] = useState('');
   const [connected, setConnected] = useState(true);
@@ -156,7 +157,7 @@ export default function Home() {
 
   async function create() {
     setBusy(true); setError('');
-    try { const result = await api({ action: 'create', songs }); enter({ ...result, role: 'host' }); }
+    try { const result = await api({ action: 'create', songs, startingPoints }); enter({ ...result, role: 'host' }); }
     catch (err) { setError(err instanceof Error ? err.message : 'Ошибка'); }
     finally { setBusy(false); }
   }
@@ -222,7 +223,12 @@ export default function Home() {
           value={song.introHint ?? ''} placeholder="Выбери вариант или напиши свою шутку"
           onChange={e => setSongs(current => current.map((s,i) => i === index ? { ...s, introHint: e.target.value } : s))} />
       </div>
-      <label>Баллы<input type="number" min="0" max="100000" value={song.points} onChange={e => setSongs(songs.map((s, i) => i === index ? { ...s, points: Number(e.target.value) } : s))} /></label></div>)}<button className="secondary" onClick={() => setSongs([...songs, emptySong()])}>+ Добавить песню</button><button className="secondary" disabled={busy || songs.length > 30} onClick={generateHints}>✦ Сгенерировать смешные подсказки</button><button disabled={busy} onClick={create}>Создать комнату</button></section></div></div>
+      <label>Баллы<input type="number" min="0" max="100000" value={song.points} onChange={e => setSongs(songs.map((s, i) => i === index ? { ...s, points: Number(e.target.value) } : s))} /></label></div>)}<button className="secondary" onClick={() => setSongs([...songs, emptySong()])}>+ Добавить песню</button><button className="secondary" disabled={busy || songs.length > 30} onClick={generateHints}>✦ Сгенерировать смешные подсказки</button><label>Начальные очки каждому игроку
+          <input type="number" min="1" max="100000" step="1" inputMode="numeric"
+            value={startingPoints} onChange={e => setStartingPoints(Number(e.target.value))} />
+        </label>
+        <button disabled={busy || !Number.isSafeInteger(startingPoints) || startingPoints < 1 || startingPoints > 100000}
+          onClick={create}>Создать комнату</button></section></div></div>
       : !state ? <div className="panel">Подключаемся к комнате…</div>
       : session.role === 'player'
         ? <PlayerScreen state={state} playerId={session.playerId ?? ''} room={session.room} connected={connected} busy={busy}

@@ -6,7 +6,7 @@ import { getAuth } from '@/lib/auth';
 import { songInput } from '@/lib/song-input';
 
 const requestSchema = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('create'), songs: z.array(songInput).min(1).max(100) }),
+  z.object({ action: z.literal('create'), songs: z.array(songInput).min(1).max(100), startingPoints: z.number().int().min(1).max(100000).default(300) }),
   z.object({ action: z.literal('join'), room: z.string().length(6), name: z.string().trim().min(1).max(40) }),
   z.object({ action: z.literal('command'), room: z.string().length(6), command: z.discriminatedUnion('type', [
     z.object({ type: z.literal('start'), id: z.string().uuid() }),
@@ -50,7 +50,7 @@ export async function POST(req: Request) {
       if (!session) return reply({ error: 'Чтобы создать комнату, войдите через Google в разделе «Мои игры».' }, 401);
       const room = randomBytes(4).toString('hex').slice(0, 6).toUpperCase();
       const hostToken = secret();
-      const game = createGame(room, body.songs.map(s => ({ ...s, id: randomUUID() })), session.user.id);
+      const game = createGame(room, body.songs.map(s => ({ ...s, id: randomUUID() })), session.user.id, body.startingPoints);
       await db.query('INSERT INTO rooms (id, host_token, state) VALUES ($1,$2,$3)', [room, hostToken, JSON.stringify(game)]);
       return reply({ room, token: hostToken }, 201);
     }

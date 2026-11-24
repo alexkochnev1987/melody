@@ -35,22 +35,24 @@ export function AuctionSummary({ bid, players, category, nominal, introHint }: S
 type FormProps = Shared & {
   disabled: boolean;
   onBid: (points: number, seconds: number) => void;
+  balance: number;
 };
 
-export function AuctionBidForm({ bid, nominal, disabled, onBid }: FormProps) {
+export function AuctionBidForm({ bid, nominal, balance, disabled, onBid }: FormProps) {
   const [points, setPoints] = useState(bid?.points ?? nominal);
   const [seconds, setSeconds] = useState(bid?.seconds ?? 10);
-  const good = Number.isSafeInteger(points) && points >= nominal && points <= 100000 &&
+  const good = Number.isSafeInteger(points) && points >= nominal && points <= 100000 && points <= balance && balance > 0 &&
     Number.isSafeInteger(seconds) && seconds >= 2 &&
     (!bid || (points >= bid.points && seconds <= bid.seconds &&
       (points > bid.points || seconds < bid.seconds)));
-  const reason = !Number.isSafeInteger(points) || points < nominal || points > 100000
+  const reason = balance <= 0 ? 'Очки закончились — ты пока не можешь делать ставки' : !Number.isSafeInteger(points) || points < nominal || points > 100000
     ? `Не меньше ${nominal} и не больше 100 000 очков`
-    : !Number.isSafeInteger(seconds) || seconds < 2
+    : points > balance ? `На балансе ${balance} очков. Ставка не может быть выше` : !Number.isSafeInteger(seconds) || seconds < 2
       ? 'Минимум 2 секунды, только целое число'
       : !good ? 'Увеличь очки или уменьши время, не ухудшая другой показатель' : '';
 
   return <section className="auction-bid-form" aria-label="Сделать ставку">
+    <p className="auction-bid-form__balance">Твой баланс: <strong>{balance} очков</strong></p>
     <div className="auction-bid-form__fields">
       <label>Очки
         <input type="number" inputMode="numeric" min={nominal} max={100000} step="1"
@@ -62,8 +64,8 @@ export function AuctionBidForm({ bid, nominal, disabled, onBid }: FormProps) {
       </label>
     </div>
     <div className="auction-bid-form__quick">
-      <button type="button" className="secondary" disabled={disabled || points > 99990}
-        onClick={() => setPoints(Math.min(100000, Math.max(points, bid?.points ?? nominal) + 10))}>+10 очков</button>
+      <button type="button" className="secondary" disabled={disabled || points > balance - 10 || points > 99990}
+        onClick={() => setPoints(Math.min(balance, 100000, Math.max(points, bid?.points ?? nominal) + 10))}>+10 очков</button>
       <button type="button" className="secondary" disabled={disabled || seconds <= 2}
         onClick={() => setSeconds(Math.max(2, Math.min(seconds, bid?.seconds ?? seconds) - 1))}>−1 секунда</button>
     </div>

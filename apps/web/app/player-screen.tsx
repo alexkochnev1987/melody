@@ -61,7 +61,8 @@ export default function PlayerScreen({ state, playerId, room, connected, busy, o
             category={state.song.category ?? 'Разное'} nominal={state.song.points} introHint={state.introHint} />
           {bidding && <AuctionBidForm key={state.currentBid?.commandId ?? 'first'} bid={state.currentBid}
             players={state.players} category={state.song.category ?? 'Разное'}
-            nominal={state.song.points} disabled={!connected || busy} onBid={onBid} />}
+            nominal={state.song.points} balance={state.players.find(p => p.id === playerId)?.score ?? 0}
+            disabled={!connected || busy} onBid={onBid} />}
         </div>}
         {state.revealedHints && state.revealedHints.length > 0 && !choosing &&
           <div className="player-screen__hints">
