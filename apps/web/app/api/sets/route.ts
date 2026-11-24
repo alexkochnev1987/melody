@@ -13,6 +13,7 @@ const hintUpdate = z.object({
   artist: z.string().min(1).max(120),
   youtubeId: z.string().max(40),
   hints: z.array(z.string().trim().min(1).max(220)).max(3),
+  introHint: z.string().trim().max(220).optional(),
 });
 const bodySchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('saveHints'), id: z.string().min(1), updates: z.array(hintUpdate).min(1).max(100) }),
