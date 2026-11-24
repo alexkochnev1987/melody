@@ -4,13 +4,13 @@ import { authClient } from '@/lib/auth-client';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
-type Track = { title: string; artist: string; youtubeId: string; points: number; startSeconds?: number; category?: string; hints?: string[] };
+type Track = { title: string; artist: string; youtubeId: string; points: number; startSeconds?: number; category?: string; hints?: string[]; introHint?: string };
 type HistoricGame = { id: string; status: string; startedAt: string | null; endedAt: string | null; roundsPlayed: number; totalRounds: number; players: { id: string; name: string; score: number }[]; scoreEvents: { id: string; playerId: string; delta: number; songId: string; reason: string }[] };
 type GameSet = { id: string; owner_id: string | null; title: string; description: string; songs: Track[] };
 type Viewer = { id: string; name: string; email: string };
 type Catalog = { games: GameSet[]; user: Viewer | null; googleConfigured: boolean };
 
-const blankSong = (): Track => ({ title: '', artist: '', youtubeId: '', points: 10, startSeconds: 0, category: 'Разное', hints: [] });
+const blankSong = (): Track => ({ title: '', artist: '', youtubeId: '', points: 10, startSeconds: 0, category: 'Разное', hints: [], introHint: '' });
 const emptyGame = (): GameSet => ({ id: '', owner_id: '', title: '', description: '', songs: [] });
 async function post(body: unknown) {
   const res = await fetch('/api/sets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -118,13 +118,13 @@ export default function Admin() {
             const expected = currentGame.songs[index];
             const hints = updates.get(index);
             if (!hints || !expected || song.title !== expected.title || song.artist !== expected.artist) return song;
-            return { ...song, hints };
+            return { ...song, hints, introHint: song.introHint?.trim() || hints[0] };
           }),
         };
       });
       if (failed) setError(`Для ${failed} песен подсказки не прошли проверку. Повтори генерацию для них.`);
       if (updates.size) setHintNotice(indices?.length === 1
-        ? 'Три подсказки заполнены. Проверь их и нажми «Сохранить подсказки этой песни».'
+        ? 'Три варианта подсказки готовы. Выбери один, при необходимости исправь текст и сохрани песню.'
         : `Подсказки заполнены для ${updates.size} песен. Проверь и нажми «Сохранить все подсказки».`);
     });
   }
@@ -143,12 +143,12 @@ export default function Admin() {
       const updates = selected.map(index => {
         const song = game.songs[index];
         return { index, title: song.title, artist: song.artist, youtubeId: song.youtubeId,
-          hints: (song.hints ?? []).map(hint => hint.trim()).filter(Boolean) };
+          hints: (song.hints ?? []).map(hint => hint.trim()).filter(Boolean), introHint: song.introHint?.trim() ?? '' };
       });
       await post({ action: 'saveHints', id: game.id, updates });
       await refresh();
       setHintNotice(indices?.length === 1
-        ? 'Подсказки этой песни сохранены в базе. Остальные песни не изменены.'
+        ? 'Предыгровая подсказка сохранена. Остальные песни не изменены.'
         : 'Подсказки всех песен сохранены в базе.');
     });
   }
@@ -197,16 +197,33 @@ export default function Admin() {
       <div className="table-heading"><div><span className="eyebrow">СОСТАВ ИГРЫ</span><h2>Песни · {editing.songs.length}</h2></div>{!readonly && <button className="secondary table-add" onClick={() => setEditing({ ...editing, songs: [...editing.songs, blankSong()] })}>+ Добавить песню</button>}</div>
       <div className="table-scroll"><table><thead><tr><th>№</th><th>Название</th><th>Исполнитель</th><th>Категория</th><th>YouTube ID</th><th>Начало, сек.</th><th>Баллы</th><th>Видео</th>{!readonly && <th>Порядок</th>}</tr></thead><tbody>{editing.songs.map((s, i) => <tr key={i}><td>{i+1}</td><td><input aria-label={`Название песни ${i+1}`} disabled={readonly} value={s.title} onChange={e => patchTrack(i, { title: e.target.value })} /></td><td><input aria-label={`Исполнитель ${i+1}`} disabled={readonly} value={s.artist} onChange={e => patchTrack(i, { artist: e.target.value })} /></td><td><input aria-label={`Категория песни ${i+1}`} disabled={readonly} value={s.category || 'Разное'} maxLength={60} onChange={e => patchTrack(i, { category: e.target.value })} /></td><td><input aria-label={`YouTube ID ${i+1}`} disabled={readonly} value={s.youtubeId} onChange={e => patchTrack(i, { youtubeId: e.target.value })} placeholder="11 символов" /></td><td><input className="points" aria-label={`Начало в секундах ${i+1}`} disabled={readonly} type="number" min="0" max="86400" step="1" value={s.startSeconds ?? 0} onChange={e => patchTrack(i, { startSeconds: Number(e.target.value) })} /></td><td><input className="points" aria-label={`Баллы ${i+1}`} disabled={readonly} type="number" min="0" max="100000" value={s.points} onChange={e => patchTrack(i, { points: Number(e.target.value) })} /></td><td>{/^[\w-]{11}$/.test(s.youtubeId) ? <button className="text-button" onClick={() => setPreview(s)}>▶ Посмотреть</button> : <a className="search-link" target="_blank" rel="noreferrer" href={`https://www.youtube.com/results?search_query=${encodeURIComponent(s.artist + ' ' + s.title)}`}>Найти</a>}</td>{!readonly && <td><div className="row-actions"><button aria-label="Поднять песню" disabled={i === 0} onClick={() => moveTrack(i,-1)}>↑</button><button aria-label="Опустить песню" disabled={i === editing.songs.length-1} onClick={() => moveTrack(i,1)}>↓</button><button aria-label="Удалить песню" onClick={() => setEditing({ ...editing, songs: editing.songs.filter((_, n) => n !== i) })}>×</button></div></td>}</tr>)}</tbody></table>{editing.songs.length === 0 && <p className="muted">Пока нет песен. Добавь первую вручную или с помощью AI.</p>}</div>
       {!readonly && editing.songs.length > 0 && <div className="hint-editor">
-        <h3>Подсказки для всей игры</h3>
+        <h3>Предыгровые подсказки для всей игры</h3>
         <button className="secondary" disabled={busy} onClick={() => generateHints()}>✦ Сгенерировать для всех песен</button>
-        <button disabled={busy || !editing.id} onClick={() => saveHints()}>Сохранить все подсказки</button>
+        <button disabled={busy || !editing.id} onClick={() => saveHints()}>Сохранить выбранные подсказки всех песен</button>
         {!editing.id && <p className="hint">Для отдельного сохранения подсказок сначала нажми «Сохранить игру».</p>}
       </div>}
-      <h2>Подсказки к песням</h2>{hintNotice && <p className="notice" role="status">{hintNotice}</p>}<p className="muted">Подсказки показываются только по команде ведущего. Каждую можно отредактировать или перегенерировать.</p>
-      {editing.songs.map((s,i) => <div className="hint-editor" key={i}><h3>{i+1}. {s.artist || 'Исполнитель'} — {s.title || 'Название'}</h3>{[0,1,2].map(index => <input key={index} disabled={readonly} maxLength={220} aria-label={`Подсказка ${index+1} для песни ${i+1}`} placeholder={`Шуточная подсказка ${index+1}`} value={s.hints?.[index] ?? ''} onChange={e => patchTrack(i, { hints: Array.from({length:3},(_,j) => j===index ? e.target.value : s.hints?.[j] ?? '').filter(Boolean) })} />)}{!readonly && <>
-        <button className="secondary" disabled={busy} onClick={() => generateHints([i])}>✦ Сгенерировать для этой песни</button>
-        <button disabled={busy || !editing.id} onClick={() => saveHints([i])}>Сохранить подсказки этой песни</button>
-      </>}</div>)}
+      <h2>Одна предыгровая подсказка на песню</h2>{hintNotice && <p className="notice" role="status">{hintNotice}</p>}<p className="muted">AI предлагает три альтернативы, но игрокам показывается только одна выбранная шутка — после выбора песни и до её запуска.</p>
+      {editing.songs.map((s,i) => <div className="hint-editor" key={i}>
+        <h3>{i+1}. {s.artist || 'Исполнитель'} — {s.title || 'Название'}</h3>
+        {(s.hints?.length ?? 0) > 0 && <div className="hint-variants" role="group" aria-label={`Варианты подсказки к песне ${i+1}`}>
+          {s.hints?.map((variant,n) => <button key={n} type="button" disabled={readonly}
+            aria-pressed={s.introHint === variant}
+            className={s.introHint === variant ? 'hint-variant hint-variant--selected' : 'hint-variant'}
+            onClick={() => patchTrack(i, { introHint: variant })}>
+            <span>Вариант {n+1}</span>{variant}
+          </button>)}
+        </div>}
+        <label>Подсказка, которую увидят игроки
+          <textarea disabled={readonly} maxLength={220} value={s.introHint ?? s.hints?.[0] ?? ''}
+            aria-label={`Выбранная подсказка к песне ${i+1}`}
+            onChange={e => patchTrack(i, { introHint: e.target.value })}
+            placeholder="Выбери вариант или напиши собственную шутку" />
+        </label>
+        {!readonly && <>
+          <button className="secondary" disabled={busy} onClick={() => generateHints([i])}>✦ Создать три варианта</button>
+          <button disabled={busy || !editing.id} onClick={() => saveHints([i])}>Сохранить подсказку этой песни</button>
+        </>}
+      </div>)}
       </section>
     </>}
     {preview && <div className="modal-backdrop" onClick={() => setPreview(null)}><div className="modal panel" role="dialog" aria-modal="true" aria-label="Предпросмотр видео" onClick={e => e.stopPropagation()}><div className="modal-head"><h2>{preview.artist} — {preview.title}</h2><button aria-label="Закрыть" className="text-button" onClick={() => setPreview(null)}>✕</button></div><div className="video"><iframe title={`Предпросмотр ${preview.title}`} src={`https://www.youtube.com/embed/${preview.youtubeId}?start=${preview.startSeconds ?? 0}&playsinline=1`} allow="encrypted-media; picture-in-picture" allowFullScreen /></div><p className="muted">Начало: {preview.startSeconds ?? 0} сек. Проверь, что видео доступно и это нужная версия песни.</p></div></div>}
