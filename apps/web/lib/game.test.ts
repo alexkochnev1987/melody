@@ -141,6 +141,9 @@ test('after a correct wager the winning player chooses the next song', () => {
   let g = prepared();
   g = exec(g,{type:'expire',id:'end',songId:'a'});
   g = exec(g,{type:'judge',id:'j',correct:true});
+  assert.equal(publicGame(g).choiceOpen,false);
+  assert.throws(()=>exec(g,{type:'choose',id:'early-choice',songId:'b',playerId:'one'}));
+  g = exec(g,{type:'allowChoice',id:'host-allows'});
   g = exec(g,{type:'choose',id:'next-song',songId:'b',playerId:'one'});
   assert.equal(g.status,'bidding');
   assert.equal(g.currentBid,null);
@@ -223,6 +226,7 @@ test('losing an all-in wager leaves no bidding power in the following round', ()
   g = exec(g,{type:'judge',id:'miss-all',correct:false});
   assert.equal(g.players[0].score,0);
   g = exec(g,{type:'skip',id:'skip-second-chance'});
+  g = exec(g,{type:'allowChoice',id:'open-next-choice'});
   g = exec(g,{type:'choose',id:'next',songId:'b'});
   assert.throws(()=>exec(g,{type:'bid',id:'broke',songId:'b',playerId:'one',points:30,seconds:2}),/нужны очки/);
 });
