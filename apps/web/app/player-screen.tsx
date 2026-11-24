@@ -59,6 +59,8 @@ export default function PlayerScreen({ state, playerId, room, connected, busy, o
         </div>
       </div>
 
+      <a className="player-screen__profile-link" href="/profile">Моя история и статистика</a>
+
       <div className="player-screen__center" aria-live="polite" aria-atomic="true">
         <span className="player-screen__round">РАУНД {state.round} ИЗ {state.totalRounds} · {state.song.availablePoints ?? state.song.points} ОЧКОВ</span>
         <h1>{view.title}</h1>
