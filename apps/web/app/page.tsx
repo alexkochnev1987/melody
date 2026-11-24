@@ -254,7 +254,11 @@ export default function Home() {
         </p>}
         {(state.revealedHints?.length ?? 0) > 0 && <div className="host-hints">{state.revealedHints?.map((hint,i) => <p key={i}>💡 {hint}</p>)}</div>}
         {session.role === 'host' && !state.auctionEnabled && state.status === 'playing' && (state.hostSong?.hints?.length ?? 0) > 0 && <div className="host-hints"><strong>Подсказки</strong><button className="secondary" disabled={busy || (state.hintLevel ?? 0) >= (state.hostSong?.hints?.length ?? 0)} onClick={() => command({ type: 'hint' })}>💡 Показать следующую подсказку</button><p>После подсказок за правильный ответ начисляется меньше очков.</p></div>}
-        {(state.status === 'lobby' || state.status === 'revealed' || (!state.auctionEnabled && state.status === 'selected')) && <section className="host-board"><h2>{session.role === 'host' ? 'Выбор следующей песни' : 'Игровое поле'}</h2><SongBoard songs={state.board ?? []} disabled={busy || !connected} onChoose={session.role === 'host' ? songId => command({ type: 'choose', songId }) : undefined} />{session.role === 'host' && state.status === 'revealed' && state.chooserId && <p className="muted">Право выбора у: {state.players.find(p => p.id === state.chooserId)?.name ?? 'игрока'}. Ведущий может выбрать вместо него.</p>}</section>}
+        {(state.status === 'lobby' || state.status === 'revealed' ||
+          (!state.auctionEnabled && state.status === 'selected') ||
+          (state.auctionEnabled && state.status === 'bidding' && !state.currentBid && session.role === 'host')) &&
+          <section className="host-board"><h2>{session.role === 'host' && state.status === 'bidding' ? 'Изменить песню до первой ставки' :
+          session.role === 'host' ? 'Выбор следующей песни' : 'Игровое поле'}</h2><SongBoard songs={state.board ?? []} disabled={busy || !connected} onChoose={session.role === 'host' ? songId => command({ type: 'choose', songId }) : undefined} />{session.role === 'host' && state.status === 'revealed' && state.chooserId && <p className="muted">Право выбора у: {state.players.find(p => p.id === state.chooserId)?.name ?? 'игрока'}. Ведущий может выбрать вместо него.</p>}</section>}
         
         {session.role === 'host' && <div className="actions">
           {state.auctionEnabled && state.status === 'bidding' &&

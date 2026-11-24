@@ -55,6 +55,11 @@ export default function PlayerScreen({ state, playerId, room, connected, busy, o
         <span className="player-screen__round">РАУНД {state.round} ИЗ {state.totalRounds} · {state.song.availablePoints ?? state.song.points} ОЧКОВ</span>
         <h1>{view.title}</h1>
         <p>{view.description}</p>
+        {state.auctionEnabled && (state.status === 'playing' || state.status === 'buzzed') && state.currentBid &&
+          <div className="player-screen__active-bid">
+            <strong>{state.players.find(p => p.id === state.currentBid?.playerId)?.name ?? 'Игрок'} · {state.currentBid.points} очков / {state.currentBid.seconds} с</strong>
+            {state.status === 'playing' && <span>Осталось ~{Math.max(0, Math.ceil(state.remainingSeconds ?? state.currentBid.seconds))} с</span>}
+          </div>}
         {view.answer && <div className="player-screen__answer"><span>ПРАВИЛЬНЫЙ ОТВЕТ</span><strong>{view.answer}</strong></div>}
         {(bidding || preparing) && <div className="player-screen__auction">
           <AuctionSummary bid={state.currentBid} players={state.players}

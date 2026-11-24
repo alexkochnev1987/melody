@@ -10,6 +10,7 @@ export type PlayerSnapshot = {
   auctionEnabled?: boolean;
   currentBid?: { playerId: string; points: number; seconds: number; commandId: string } | null;
   introHint?: string | null;
+  remainingSeconds?: number | null;
   board?: { id: string; category: string; points: number; played: boolean; selected: boolean }[];
   revealedHints?: string[];
   blockedPlayerIds: string[];

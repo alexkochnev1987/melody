@@ -185,3 +185,27 @@ test('auction forbids wagering more than current balance or with zero points', (
   assert.throws(() => exec(game, { type: 'adjust', id: 'reduce-active', playerId: 'two',
     delta: -1, reason: 'Manual change' }), /ниже уже принятой ставки/);
 });
+
+test('losing an all-in wager leaves no bidding power in the following round', () => {
+  let g = auction();
+  g = exec(g,{type:'bid',id:'all-in',songId:'a',playerId:'one',points:300,seconds:2});
+  g = exec(g,{type:'closeBidding',id:'close-all'});
+  g = exec(g,{type:'start',id:'start-all'});
+  g = exec(g,{type:'playback',id:'playing-all',songId:'a',active:true});
+  g = exec(g,{type:'expire',id:'miss-all',songId:'a'});
+  assert.equal(g.players[0].score,0);
+  g = exec(g,{type:'choose',id:'next',songId:'b'});
+  assert.throws(()=>exec(g,{type:'bid',id:'broke',songId:'b',playerId:'one',points:30,seconds:2}),/нужны очки/);
+});
+
+test('server serializes STOP versus expired wager to award or penalize only once', () => {
+  let answer = prepared();
+  answer = exec(answer,{type:'buzz',id:'buzz-first',songId:'a',playerId:'one'});
+  assert.throws(()=>exec(answer,{type:'expire',id:'late-expire',songId:'a'}));
+  answer = exec(answer,{type:'judge',id:'right',correct:true});
+  assert.equal(answer.scoreEvents.length,1);
+  let timedOut = prepared();
+  timedOut = exec(timedOut,{type:'expire',id:'expire-first',songId:'a'});
+  assert.throws(()=>exec(timedOut,{type:'buzz',id:'late-buzz',songId:'a',playerId:'one'}));
+  assert.equal(timedOut.scoreEvents.length,1);
+});
