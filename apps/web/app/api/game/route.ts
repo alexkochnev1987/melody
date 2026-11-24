@@ -4,6 +4,7 @@ import { database } from '@/lib/db';
 import { applyCommand, createGame, publicGame, type Game, type Command } from '@/lib/game';
 import { getAuth } from '@/lib/auth';
 import { songInput } from '@/lib/song-input';
+import { getGuestIdentity } from '@/lib/guest-identity';
 
 const requestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('create'), songs: z.array(songInput).min(1).max(100), startingPoints: z.number().int().min(1).max(100000).default(300) }),
@@ -27,7 +28,10 @@ const requestSchema = z.discriminatedUnion('action', [
   ]) }),
 ]);
 type Row = { state: Game; host_token: string };
-const reply = (data: unknown, status = 200) => Response.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
+const reply = (data: unknown, status = 200, setCookie?: string) => Response.json(data, {
+  status,
+  headers: { 'Cache-Control': 'private, no-store', ...(setCookie ? { 'Set-Cookie': setCookie } : {}) },
+});
 const token = (req: Request) => req.headers.get('authorization')?.replace(/^Bearer /, '') ?? '';
 const secret = () => randomBytes(32).toString('base64url');
 
@@ -59,11 +63,26 @@ export async function POST(req: Request) {
       const row = (await tx.query<Row>('SELECT state, host_token FROM rooms WHERE id = $1 FOR UPDATE', [body.room])).rows[0];
       if (!row) return reply({ error: 'Комната не найдена' }, 404);
       if (body.action === 'join') {
+        const identity = getGuestIdentity(req);
+        const existingId = row.state.identityHashes?.[identity.hash];
+        if (existingId) {
+          // A returning guest can recover their original room participant
+          // using their HttpOnly browser identity, without doubling their score.
+          const existing = (await tx.query<{ token: string }>(
+            'SELECT token FROM room_players WHERE room_id=$1 AND player_id=$2',
+            [body.room, existingId],
+          )).rows[0];
+          if (!existing) return reply({ error: 'Не удалось восстановить участника' }, 409);
+          return reply({ room: body.room, token: existing.token, playerId: existingId, restored: true },
+            200, identity.setCookie);
+        }
         const playerId = randomUUID(), playerToken = secret();
-        const game = applyCommand(row.state, { type: 'join', id: randomUUID(), playerId, name: body.name });
+        const game = applyCommand(row.state, {
+          type: 'join', id: randomUUID(), playerId, name: body.name, identityHash: identity.hash,
+        });
         await tx.query('INSERT INTO room_players (room_id,token,player_id) VALUES ($1,$2,$3)', [body.room, playerToken, playerId]);
         await tx.query('UPDATE rooms SET state=$2 WHERE id=$1', [body.room, JSON.stringify(game)]);
-        return reply({ room: body.room, token: playerToken, playerId });
+        return reply({ room: body.room, token: playerToken, playerId }, 200, identity.setCookie);
       }
       let command: Command;
       if (body.command.type === 'buzz' || body.command.type === 'choose' || body.command.type === 'bid') {
