@@ -55,3 +55,22 @@ test('bidding screen does not allow STOP', () => {
   assert.equal(view({ status: 'bidding', auctionEnabled: true }).canBuzz, false);
   assert.equal(view({ status: 'bidding', auctionEnabled: true }).title, 'Аукцион открыт!');
 });
+
+test('the leading bidder sees their confirmed bid instead of another bidding invitation', () => {
+  const result = view({ status: 'bidding', auctionEnabled: true,
+    currentBid: { playerId: 'one', points: 60, seconds: 8, commandId: 'bid-1' } });
+  assert.equal(result.title, 'Ты лидируешь!');
+  assert.equal(result.canBuzz, false);
+});
+
+test('second chance enables STOP without sound only to players who have not answered wrongly', () => {
+  const afterClip = { status: 'openAnswer', playbackActive: false, auctionEnabled: true,
+    currentBid: { playerId: 'one', points: 60, seconds: 8, commandId: 'bid-1' } };
+  assert.equal(view(afterClip).canBuzz, true);
+  assert.equal(view(afterClip).buttonLabel, 'STOP');
+  assert.equal(view({ ...afterClip, blockedPlayerIds: ['one'] }).canBuzz, false);
+  assert.equal(getPlayerView({ ...base, ...afterClip }, 'two', true, false).canBuzz, true);
+  assert.equal(view(afterClip, false).canBuzz, false);
+  assert.equal(view({ ...afterClip, status: 'secondBuzzed', winnerId: 'one' }).canBuzz, false);
+  assert.equal(view({ ...afterClip, status: 'secondBuzzed', winnerId: 'one' }).title, 'Ты первый!');
+});
