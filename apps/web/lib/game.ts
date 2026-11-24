@@ -27,6 +27,8 @@ export type Game = {
   bidHistory?: Bid[];
   /** Last revealed correct answer, kept until the next song is selected. */
   roundResult?: { playerId: string; points: number } | null;
+  /** The host opens the next-song picker only after everyone sees the answer. */
+  choiceOpen?: boolean;
   /** Configured when this room was created. Existing legacy rooms may omit it. */
   startingPoints?: number;
   ownerId?: string;
@@ -44,6 +46,7 @@ export type Command =
   | { type: 'choose'; id: string; songId: string; playerId?: string }
   | { type: 'bid'; id: string; songId: string; playerId: string; points: number; seconds: number }
   | { type: 'closeBidding'; id: string }
+  | { type: 'allowChoice'; id: string }
   | { type: 'expire'; id: string; songId: string }
   | { type: 'playback'; id: string; songId: string; active: boolean }
   | { type: 'skip'; id: string }
@@ -122,7 +125,7 @@ export function createGame(id: string, songs: Song[], ownerId?: string, starting
     songIndex: 0, players: [], winnerId: null, blockedPlayerIds: [],
     scoreEvents: [], commandIds: [], playedSongIds: [], chooserId: null,
     hintLevel: 0, playbackActive: false, auctionEnabled: true,
-    currentBid: null, bidHistory: [], playbackElapsedMs: 0, startingPoints,
+    currentBid: null, bidHistory: [], playbackElapsedMs: 0, startingPoints, choiceOpen: false,
     ...(ownerId ? { ownerId } : {}),
   };
 }
@@ -163,6 +166,7 @@ export function applyCommand(game: Game, command: Command): Game {
     next.winnerId = null;
     next.blockedPlayerIds = [];
     next.chooserId = chooserId;
+    next.choiceOpen = !next.auctionEnabled;
     resetClip();
     if (next.playedSongIds!.length === next.songs.length) {
       next.status = 'finished';
@@ -181,7 +185,8 @@ export function applyCommand(game: Game, command: Command): Game {
     }
     case 'choose': {
       const allowed = next.auctionEnabled ? ['lobby', 'revealed', 'bidding'] : ['lobby', 'revealed', 'selected'];
-      if (!allowed.includes(next.status) || (next.status === 'bidding' && next.currentBid)) {
+      if (!allowed.includes(next.status) || (next.status === 'bidding' && next.currentBid) ||
+        (next.auctionEnabled && next.status === 'revealed' && next.choiceOpen === false)) {
         throw new Error('Сейчас нельзя выбрать песню');
       }
       const index = next.songs.findIndex(s => s.id === command.songId);
@@ -193,6 +198,7 @@ export function applyCommand(game: Game, command: Command): Game {
       next.hintLevel = 0;
       next.currentBid = null;
       next.roundResult = null;
+      next.choiceOpen = false;
       resetClip();
       next.winnerId = null;
       next.blockedPlayerIds = [];
@@ -218,6 +224,12 @@ export function applyCommand(game: Game, command: Command): Game {
       next.bidHistory.push(bid);
       break;
     }
+    case 'allowChoice':
+      if (!next.auctionEnabled || next.status !== 'revealed' || next.choiceOpen) {
+        throw new Error('Переход к выбору недоступен');
+      }
+      next.choiceOpen = true;
+      break;
     case 'closeBidding':
       if (!next.auctionEnabled || next.status !== 'bidding' || !next.currentBid) {
         throw new Error('Для закрытия аукциона нужна хотя бы одна ставка');
@@ -371,6 +383,7 @@ export function applyCommand(game: Game, command: Command): Game {
       next.chooserId = null;
       next.currentBid = null;
       next.roundResult = null;
+      next.choiceOpen = false;
       next.hintLevel = 0;
       resetClip();
       next.winnerId = null;
@@ -401,6 +414,7 @@ export function publicGame(game: Game) {
     currentBid: game.auctionEnabled ? game.currentBid ?? null : null,
     bidHistory: game.auctionEnabled ? game.bidHistory ?? [] : [],
     roundResult: ['revealed', 'finished'].includes(game.status) ? game.roundResult ?? null : null,
+    choiceOpen: game.choiceOpen !== false,
     round: Math.min(game.songs.length, Math.max(1, currentRound)), totalRounds: game.songs.length,
     players: game.players, winnerId: game.winnerId, chooserId: game.chooserId ?? null,
     blockedPlayerIds: game.blockedPlayerIds, playbackActive: hasActivePlayback(game),
