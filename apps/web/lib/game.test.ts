@@ -77,20 +77,24 @@ test('only winning bidder can buzz, the server does not trust player IDs', () =>
   assert.equal(g.status, 'revealed');
 });
 
-test('wrong answer and expired listening time lose bid and finish the round', () => {
+test('wrong answer and expired listening time lose bid and open a second chance', () => {
   let g = prepared();
   g = exec(g, { type: 'buzz', id: 'answer', playerId: 'one', songId: 'a' });
   g = exec(g, { type: 'judge', id: 'wrong', correct: false });
   assert.equal(g.players[0].score, 250);
-  assert.equal(g.status, 'revealed');
+  assert.equal(g.status, 'openAnswer');
   assert.equal(g.chooserId, null);
+  assert.equal(g.playbackActive, false);
+  assert.deepEqual(g.blockedPlayerIds, ['one']);
   assert.equal(g.scoreEvents.at(-1)?.reason, 'Аукцион: неправильный ответ');
   let timeout = prepared();
   timeout = exec(timeout,{type:'expire',id:'timeout',songId:'a'});
   assert.equal(timeout.players[0].score,250);
   assert.equal(timeout.scoreEvents.at(-1)?.reason,'Аукцион: время истекло');
-  assert.equal(timeout.status,'revealed');
+  assert.equal(timeout.status,'openAnswer');
   assert.throws(()=>exec(timeout,{type:'expire',id:'again',songId:'a'}));
+  timeout = exec(timeout,{type:'skip',id:'close-second-chance'});
+  assert.equal(timeout.status,'revealed');
 });
 
 test('host pause and reconnect do not reset listening time', () => {
@@ -151,6 +155,8 @@ test('finished auction records both stake and score results', () => {
   g = exec(g,{type:'start',id:'start'});
   g = exec(g,{type:'playback',id:'play',songId:'a',active:true});
   g = exec(g,{type:'expire',id:'expire',songId:'a'});
+  assert.equal(g.status,'openAnswer');
+  g = exec(g,{type:'skip',id:'finish-after-second-chance'});
   assert.equal(g.status,'finished');
   assert.equal(g.players[0].score,240);
   assert.equal(g.bidHistory?.length,1);
@@ -194,6 +200,7 @@ test('losing an all-in wager leaves no bidding power in the following round', ()
   g = exec(g,{type:'playback',id:'playing-all',songId:'a',active:true});
   g = exec(g,{type:'expire',id:'miss-all',songId:'a'});
   assert.equal(g.players[0].score,0);
+  g = exec(g,{type:'skip',id:'pass-second-chance'});
   g = exec(g,{type:'choose',id:'next',songId:'b'});
   assert.throws(()=>exec(g,{type:'bid',id:'broke',songId:'b',playerId:'one',points:30,seconds:2}),/нужны очки/);
 });
@@ -206,6 +213,69 @@ test('server serializes STOP versus expired wager to award or penalize only once
   assert.equal(answer.scoreEvents.length,1);
   let timedOut = prepared();
   timedOut = exec(timedOut,{type:'expire',id:'expire-first',songId:'a'});
-  assert.throws(()=>exec(timedOut,{type:'buzz',id:'late-buzz',songId:'a',playerId:'one'}));
+  assert.equal(timedOut.status, 'openAnswer');
+  timedOut = exec(timedOut,{type:'buzz',id:'second-buzz',songId:'a',playerId:'two'});
   assert.equal(timedOut.scoreEvents.length,1);
+  assert.throws(()=>exec(timedOut,{type:'expire',id:'late-expire',songId:'a'}));
+});
+
+test('the leading bidder cannot outbid themselves, even with a better offer', () => {
+  let game = auction();
+  game = exec(game, { type: 'bid', id: 'first-bid', songId: 'a', playerId: 'one', points: 50, seconds: 12 });
+  assert.throws(() => exec(game, { type: 'bid', id: 'self-bid', songId: 'a', playerId: 'one', points: 80, seconds: 10 }), /собственную ставку/);
+  assert.equal(game.currentBid?.points, 50);
+  assert.equal(game.bidHistory?.length, 1);
+  game = exec(game, { type: 'bid', id: 'other-bid', songId: 'a', playerId: 'two', points: 60, seconds: 12 });
+  game = exec(game, { type: 'bid', id: 'return-bid', songId: 'a', playerId: 'one', points: 60, seconds: 11 });
+  assert.equal(game.currentBid?.playerId, 'one');
+});
+
+test('after a wrong wager the next player can press STOP with no audio and earn nominal points', () => {
+  let game = prepared();
+  game = exec(game, { type: 'buzz', id: 'wager-buzz', songId: 'a', playerId: 'one' });
+  game = exec(game, { type: 'judge', id: 'wager-wrong', correct: false });
+  assert.equal(game.status, 'openAnswer');
+  assert.equal(game.players[0].score, 250);
+  assert.throws(() => exec(game, { type: 'buzz', id: 'same-answer-again', songId: 'a', playerId: 'one' }), /недоступно/);
+  assert.equal(game.playbackActive, false);
+  game = exec(game, { type: 'buzz', id: 'second-chance-buzz', songId: 'a', playerId: 'two' });
+  assert.equal(game.status, 'secondBuzzed');
+  assert.equal(game.winnerId, 'two');
+  assert.throws(() => exec(game, { type: 'judge', id: 'judge-other', correct: true, playerId: 'one' }), /ответившего/);
+  game = exec(game, { type: 'judge', id: 'second-right', correct: true });
+  assert.equal(game.status, 'revealed');
+  assert.equal(game.players[0].score, 250);
+  assert.equal(game.players[1].score, 350);
+  assert.equal(game.scoreEvents.length, 2);
+  assert.deepEqual(game.scoreEvents.map(e => e.reason), ['Аукцион: неправильный ответ', 'Второй шанс: правильный ответ']);
+  assert.equal(game.chooserId, 'two');
+  assert.throws(() => exec(game, { type: 'buzz', id: 'late', songId: 'a', playerId: 'one' }));
+});
+
+test('on timeout any player can press STOP, and repeated wrong answers do not cause new wager losses', () => {
+  let game = prepared();
+  game = exec(game, { type: 'expire', id: 'time-finished', songId: 'a' });
+  assert.equal(game.status, 'openAnswer');
+  assert.equal(game.playbackActive, false);
+  game = exec(game, { type: 'buzz', id: 'second-one', songId: 'a', playerId: 'one' });
+  game = exec(game, { type: 'judge', id: 'second-wrong', correct: false });
+  assert.equal(game.status, 'openAnswer');
+  assert.equal(game.scoreEvents.length, 1);
+  assert.deepEqual(game.blockedPlayerIds, ['one']);
+  assert.throws(() => exec(game, { type: 'buzz', id: 'retry', songId: 'a', playerId: 'one' }));
+  game = exec(game, { type: 'buzz', id: 'second-two', songId: 'a', playerId: 'two' });
+  game = exec(game, { type: 'judge', id: 'second-win', correct: true });
+  assert.equal(game.players[0].score, 250);
+  assert.equal(game.players[1].score, 350);
+  assert.equal(game.status, 'revealed');
+  assert.equal(game.scoreEvents.length, 2);
+});
+
+test('host can close second chance without any positive award', () => {
+  let game = prepared();
+  game = exec(game, { type: 'expire', id: 'timeout', songId: 'a' });
+  game = exec(game, { type: 'skip', id: 'reveal' });
+  assert.equal(game.status, 'revealed');
+  assert.deepEqual(game.scoreEvents.map(e => e.delta), [-50]);
+  assert.equal(game.chooserId, null);
 });
