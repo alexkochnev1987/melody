@@ -132,11 +132,13 @@ test('remaining songs return to bidding and preserve past bids and results', () 
 test('legacy stored rooms continue with old start and STOP semantics', () => {
   let g = room();
   delete g.auctionEnabled;
+  // Simulate a room saved before starting credits were introduced.
+  g.players.forEach(p => { p.score = 0; });
   g = exec(g,{type:'start',id:'legacy-start'});
   g = exec(g,{type:'playback',id:'legacy-playing',songId:'a',active:true});
   g = exec(g,{type:'buzz',id:'legacy-buzz',playerId:'two',songId:'a'});
   g = exec(g,{type:'judge',id:'legacy-judge',correct:true});
-  assert.equal(g.players[1].score,300);
+  assert.equal(g.players[1].score,50);
   assert.equal(g.chooserId,'two');
 });
 
