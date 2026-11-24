@@ -31,6 +31,8 @@ export async function GET(req: Request) {
     totalRounds: state.songs.length,
     players: [...state.players].sort((a, b) => b.score - a.score).map(({ id, name, score }) => ({ id, name, score })),
     scoreEvents: state.scoreEvents,
+    startingPoints: state.startingPoints ?? 0,
+    bids: state.bidHistory ?? [],
   }));
   return Response.json({ games, nextOffset: rows.length > 50 ? offset + 50 : null }, { headers: { 'Cache-Control': 'no-store' } });
 }
