@@ -44,14 +44,43 @@ test('song answer is hidden until the round has been revealed', () => {
   assert.equal(view({ status: 'finished', song }).answer, 'Band — Secret');
 });
 
-test('auction: only the winning bidder sees enabled STOP', () => {
+test('auction bidder listens to timed clip without STOP', () => {
   const auctionState = { status: 'playing', auctionEnabled: true,
     currentBid: { playerId: 'two', points: 60, seconds: 5, commandId: 'bid-1' } };
   assert.equal(view(auctionState).canBuzz, false);
-  assert.equal(view(auctionState).title, 'Слушает другой игрок');
-  assert.equal(getPlayerView({ ...base, ...auctionState }, 'two', true, false).canBuzz, true);
+  assert.equal(view(auctionState).title, 'Слушает победитель торгов');
+  assert.equal(getPlayerView({ ...base, ...auctionState }, 'two', true, false).canBuzz, false);
 });
 test('bidding screen does not allow STOP', () => {
   assert.equal(view({ status: 'bidding', auctionEnabled: true }).canBuzz, false);
   assert.equal(view({ status: 'bidding', auctionEnabled: true }).title, 'Аукцион открыт!');
+});
+
+test('the bidder receives a confirmed leading bid message and cannot buzz during judgment', () => {
+  const bid = { playerId: 'one', points: 50, seconds: 3, commandId: 'bid-1' };
+  assert.equal(view({ status: 'bidding', auctionEnabled: true, currentBid: bid }).title,'Ты лидируешь!');
+  assert.equal(view({ status: 'awaitingJudgment', auctionEnabled: true, currentBid: bid }).title,'Назови свой ответ!');
+  assert.equal(view({ status: 'awaitingJudgment', auctionEnabled: true, currentBid: bid }).canBuzz,false);
+});
+
+test('only other players can use STOP during an active second-chance replay', () => {
+  const bid = { playerId: 'one', points: 50, seconds: 3, commandId: 'bid-1' };
+  const snap = { status: 'openAnswer', auctionEnabled: true, currentBid: bid };
+  assert.equal(view({ ...snap, playbackActive: true }).canBuzz,false);
+  assert.equal(getPlayerView({ ...base,...snap,playbackActive:true },'two',true,false).canBuzz,true);
+  assert.equal(getPlayerView({ ...base,...snap,playbackActive:false },'two',true,false).canBuzz,false);
+  assert.equal(getPlayerView({ ...base,...snap,playbackActive:true },'two',false,false).canBuzz,false);
+  assert.equal(view({ ...snap,status:'secondBuzzed',winnerId:'one' }).canBuzz,false);
+});
+
+test('correct answer is displayed to all players before the host opens selection', () => {
+  const state = { status:'revealed',auctionEnabled:true,choiceOpen:false,chooserId:'one',
+    roundResult:{playerId:'one',points:50},
+    song:{id:'song',title:'Secret',artist:'Band',points:50} };
+  const result = view(state);
+  assert.equal(result.title,'Правильный ответ!');
+  assert.equal(result.answer,'Band — Secret');
+  assert.equal(result.canBuzz,false);
+  assert.notEqual(result.title,'Теперь твой выбор!');
+  assert.equal(view({...state,choiceOpen:true}).title,'Теперь твой выбор!');
 });

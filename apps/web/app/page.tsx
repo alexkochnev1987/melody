@@ -6,10 +6,11 @@ import HostPlayer, { type HostPlayerHandle } from './host-player';
 import PlayerScreen from './player-screen';
 import SongBoard from './song-board';
 import { AuctionSummary } from './auction-panel';
+import RoundResult from './round-result';
 
 type Player = { id: string; name: string; score: number };
 type Song = { id: string; title?: string; artist?: string; youtubeId?: string; points: number; availablePoints?: number; startSeconds?: number; category?: string; hints?: string[] };
-type State = { id: string; revision: number; status: string; auctionEnabled?: boolean; currentBid?: { playerId: string; points: number; seconds: number; commandId: string } | null; introHint?: string | null; remainingSeconds?: number | null; playbackActive?: boolean; round: number; totalRounds: number; players: Player[]; winnerId: string | null; chooserId?: string | null; blockedPlayerIds: string[]; board?: { id: string; category: string; points: number; played: boolean; selected: boolean }[]; hintLevel?: number; revealedHints?: string[]; song: Song; hostSong?: Song };
+type State = { id: string; revision: number; status: string; auctionEnabled?: boolean; currentBid?: { playerId: string; points: number; seconds: number; commandId: string } | null; bidHistory?: { playerId: string; points: number; seconds: number; commandId: string }[]; introHint?: string | null; roundResult?: { playerId: string; points: number } | null; choiceOpen?: boolean; remainingSeconds?: number | null; playbackActive?: boolean; round: number; totalRounds: number; players: Player[]; winnerId: string | null; chooserId?: string | null; blockedPlayerIds: string[]; board?: { id: string; category: string; points: number; played: boolean; selected: boolean }[]; hintLevel?: number; revealedHints?: string[]; song: Song; hostSong?: Song };
 type DraftSong = { title: string; artist: string; youtubeId: string; points: number; category: string; hints: string[]; introHint?: string; candidateId?: string; videoTitle?: string; channel?: string; verification?: 'verified' | 'unavailable' | 'missing' };
 type Session = { room: string; token: string; playerId?: string; role: 'host' | 'player' | 'display' };
 
@@ -101,7 +102,7 @@ export default function Home() {
     if (session?.role !== 'host') return;
     playbackSync.current = playbackSync.current.catch(() => {}).then(async () => {
       const latest = latestRoom.current;
-      if (!latest || latest.status !== 'playing') return;
+      if (!latest || !['playing', 'openAnswer'].includes(latest.status)) return;
       const active = currentPlayback.current;
       if (!force && latest.playbackActive === active) return;
       await api({ action: 'command', room: session.room,
@@ -112,19 +113,21 @@ export default function Home() {
     });
   }, [session, refresh]);
   useEffect(() => {
-    if (session?.role !== 'host' || !state || state.status !== 'playing' || state.playbackActive === playerIsPlaying) return;
+    if (session?.role !== 'host' || !state || !['playing', 'openAnswer'].includes(state.status) ||
+      state.playbackActive === playerIsPlaying) return;
     syncPlayback();
   }, [session?.role, state?.id, state?.song.id, state?.status, state?.playbackActive, playerIsPlaying, syncPlayback]);
   // If the host goes offline, the lease expires and STOP is rejected server-side.
   useEffect(() => {
-    if (session?.role !== 'host' || state?.status !== 'playing' || !playerIsPlaying) return;
+    if (session?.role !== 'host' || !['playing', 'openAnswer'].includes(state?.status ?? '') || !playerIsPlaying) return;
     const timer = window.setInterval(() => {
       if (currentPlayback.current) syncPlayback(true);
     }, 4000);
     return () => window.clearInterval(timer);
   }, [session?.role, state?.status, playerIsPlaying, syncPlayback]);
   useEffect(() => {
-    if (session?.role === 'host' && (state?.status === 'buzzed' || state?.status === 'revealed' || state?.status === 'finished') && lastStatus.current !== state?.status) {
+    if (session?.role === 'host' && (state?.status === 'buzzed' || state?.status === 'awaitingJudgment' ||
+      state?.status === 'secondBuzzed' || state?.status === 'revealed' || state?.status === 'finished') && lastStatus.current !== state?.status) {
       player.current?.pause();
     }
     lastStatus.current = state?.status ?? '';
@@ -140,6 +143,10 @@ export default function Home() {
     setPlayerMessage('');
     if (!player.current?.play()) setPlayerMessage('Плеер ещё загружается. Попробуйте через несколько секунд.');
   }
+  function replayMusic() {
+    setPlayerMessage('');
+    if (!player.current?.replay()) setPlayerMessage('Не удалось повторить мелодию. Проверьте плеер.');
+  }
   function startWithMusic(type: 'start' | 'resume') {
     setPlayerMessage('');
     if (!player.current?.play()) { setPlayerMessage('Плеер ещё загружается. Попробуйте через несколько секунд.'); return; }
@@ -152,7 +159,7 @@ export default function Home() {
     player.current?.pause();
     void api({ action: 'command', room: session.room,
       command: { type: 'expire', id: commandId(), songId: active.song.id } }, session.token)
-      .then(refresh).catch(err => setError(err instanceof Error ? err.message : 'Не удалось завершить ставку'));
+      .then(refresh).catch(err => setError(err instanceof Error ? err.message : 'Не удалось завершить фрагмент'));
   }, [session, refresh]);
 
   async function create() {
@@ -237,15 +244,31 @@ export default function Home() {
             onBid={(points,seconds) => command({ type: 'bid', songId: state.song.id, points, seconds })} />
         : <div className="game-grid"><section className="panel main-panel"><div className="game-top"><div><span className="eyebrow">КОМНАТА {session.room}</span><h1>{session.role === 'host' ? 'Пульт ведущего' : session.role === 'display' ? 'Играем!' : `Привет, ${state.players.find(p => p.id === session.playerId)?.name ?? 'игрок'}!`}</h1></div><span className={connected ? 'connection' : 'connection offline'}>{connected ? '● На связи' : '● Нет связи'}</span></div><p className="muted">Раунд {state.round} из {state.totalRounds} · {state.song.availablePoints ?? state.song.points} баллов</p>
         {session.role === 'host' && state.hostSong?.youtubeId &&
-          (!state.auctionEnabled || ['selected','playing','buzzed'].includes(state.status)) && <><div className="host-song"><strong>{state.hostSong.title}</strong><span>{state.hostSong.artist} · {state.hostSong.points} баллов · начало {state.hostSong.startSeconds ?? 0} сек.</span></div><HostPlayer ref={player} key={state.hostSong.id} videoId={state.hostSong.youtubeId}
-          startSeconds={state.hostSong.startSeconds ?? 0}
-          listenSeconds={state.auctionEnabled ? state.currentBid?.seconds : undefined}
-          initialRemainingSeconds={state.auctionEnabled ? state.remainingSeconds : undefined}
+          (!state.auctionEnabled || ['selected','playing','buzzed','openAnswer','secondBuzzed','revealed','finished'].includes(state.status)) && <><div className="host-song"><strong>{state.hostSong.title}</strong><span>{state.hostSong.artist} · {state.hostSong.points} баллов · начало {state.hostSong.startSeconds ?? 0} сек.</span></div><HostPlayer ref={player} key={`${state.hostSong.id}:${state.auctionEnabled && ['openAnswer','secondBuzzed','revealed','finished'].includes(state.status) ? 'unlimited' : 'limited'}`} videoId={state.hostSong.youtubeId}
+          startSeconds={state.auctionEnabled && ['revealed','finished'].includes(state.status)
+            ? 0 : (state.hostSong.startSeconds ?? 0)}
+          listenSeconds={state.auctionEnabled && !['openAnswer','secondBuzzed','revealed','finished'].includes(state.status)
+            ? state.currentBid?.seconds : undefined}
+          initialRemainingSeconds={state.auctionEnabled && !['openAnswer','secondBuzzed','revealed','finished'].includes(state.status)
+            ? state.remainingSeconds : undefined}
           onExpired={onClipExpired}
           onReady={setPlayerReady} onPlaybackChange={handlePlaybackChange}
           onPlaybackBlocked={playbackBlocked} onError={playbackError} />{playerMessage && <p className="notice" role="alert">{playerMessage}</p>}</>}
-        <div className="status">{state.status === 'lobby' ? (state.auctionEnabled ? 'Выберите песню для аукциона' : 'Ждём игроков') : state.status === 'bidding' ? 'Торги открыты — делайте ставки!' : state.status === 'selected' ? 'Торги закрыты — ведущий запускает музыку' : state.status === 'playing' ? (state.playbackActive ? 'Слушаем мелодию' : 'Музыка пока не играет — STOP недоступен') : state.status === 'buzzed' ? `${winner?.name ?? 'Игрок'} нажал первым!` : state.status === 'revealed' ? `${state.song.artist} — ${state.song.title}` : 'Игра завершена'}</div>
-        {state.auctionEnabled && ['bidding','selected','playing','buzzed'].includes(state.status) && <AuctionSummary
+        <div className="status">
+          {state.status === 'lobby' ? (state.auctionEnabled ? 'Выберите песню для аукциона' : 'Ждём игроков')
+            : state.status === 'bidding' ? 'Торги открыты — делайте ставки!'
+            : state.status === 'selected' ? 'Торги закрыты — ведущий готовит музыку'
+            : state.status === 'playing' ? (state.playbackActive ? 'Играет выбранный фрагмент' : 'Фрагмент на паузе — ведущий может включить музыку')
+            : state.status === 'awaitingJudgment' ? 'Фрагмент окончен. Ведущий оценивает ответ победителя торгов'
+            : state.status === 'openAnswer' ? 'Второй шанс: другие участники могут остановить мелодию во время повтора'
+            : state.status === 'secondBuzzed' ? `${winner?.name ?? 'Игрок'} остановил повтор и отвечает`
+            : state.status === 'buzzed' ? `${winner?.name ?? 'Игрок'} нажал первым!`
+            : state.status === 'revealed' || state.status === 'finished'
+              ? `${state.song.artist} — ${state.song.title}` : 'Игра завершена'}
+        </div>
+        {['revealed','finished'].includes(state.status) &&
+          <RoundResult song={state.song} result={state.roundResult} players={state.players} />}
+        {state.auctionEnabled && ['bidding','selected','playing','awaitingJudgment','buzzed','openAnswer','secondBuzzed'].includes(state.status) && <AuctionSummary
           bid={state.currentBid} players={state.players} category={state.song.category ?? 'Разное'}
           nominal={state.song.points} introHint={state.introHint} />}
         {state.auctionEnabled && state.status === 'playing' && <p className="auction-timer">
@@ -254,7 +277,8 @@ export default function Home() {
         </p>}
         {(state.revealedHints?.length ?? 0) > 0 && <div className="host-hints">{state.revealedHints?.map((hint,i) => <p key={i}>💡 {hint}</p>)}</div>}
         {session.role === 'host' && !state.auctionEnabled && state.status === 'playing' && (state.hostSong?.hints?.length ?? 0) > 0 && <div className="host-hints"><strong>Подсказки</strong><button className="secondary" disabled={busy || (state.hintLevel ?? 0) >= (state.hostSong?.hints?.length ?? 0)} onClick={() => command({ type: 'hint' })}>💡 Показать следующую подсказку</button><p>После подсказок за правильный ответ начисляется меньше очков.</p></div>}
-        {(state.status === 'lobby' || state.status === 'revealed' ||
+        {(state.status === 'lobby' ||
+          (state.status === 'revealed' && (!state.auctionEnabled || state.choiceOpen !== false)) ||
           (!state.auctionEnabled && state.status === 'selected') ||
           (state.auctionEnabled && state.status === 'bidding' && !state.currentBid && session.role === 'host')) &&
           <section className="host-board"><h2>{session.role === 'host' && state.status === 'bidding' ? 'Изменить песню до первой ставки' :
@@ -264,12 +288,83 @@ export default function Home() {
           {state.auctionEnabled && state.status === 'bidding' &&
             <button disabled={busy || !state.currentBid} onClick={() => command({ type: 'closeBidding' })}>
               Закрыть торги · {state.currentBid ? `${state.currentBid.points} очков / ${state.currentBid.seconds} сек` : 'ожидаем ставку'}
-            </button>}{(state.status === 'selected' || (!state.auctionEnabled && state.status === 'lobby')) && <><button disabled={busy || state.players.length === 0 || !playerReady} onClick={() => state.auctionEnabled ? command({ type: 'start' }) : startWithMusic('start')}>
-              {state.auctionEnabled ? 'Подготовить раунд' : (state.status === 'selected' ? 'Запустить выбранную песню' : 'Начать игру и слушать')}</button>{state.players.length === 0 && <p className="muted">Для начала нужен хотя бы один игрок.</p>}{!playerReady && <p className="muted">Ожидаем загрузки плеера YouTube.</p>}</>}{state.status === 'playing' && <><button disabled={!playerReady} onClick={playMusic}>
-              ▶ {state.auctionEnabled ? 'Включить фрагмент' : 'Слушать'}
-            </button><button className="secondary" disabled={!playerReady} onClick={() => player.current?.pause()}>Ⅱ Пауза музыки</button><button className="secondary" disabled={busy} onClick={() => command({ type: 'skip' })}>Пропустить песню</button></>}{state.status === 'buzzed' && <>{!state.auctionEnabled && <select aria-label="Кому начислить баллы" value={awardTo} onChange={e => setAwardTo(e.target.value)}><option value="">Баллы первому игроку</option>{state.players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}<button disabled={busy} onClick={() => command({ type: 'judge', correct: true, ...(!state.auctionEnabled && awardTo ? { playerId: awardTo } : {}) })}>Верно · +{state.song.availablePoints ?? state.song.points}</button><button className="secondary" disabled={busy} onClick={() => command({ type: 'judge', correct: false })}>
-              {state.auctionEnabled ? `Неверно · −${state.song.availablePoints ?? state.song.points}` : 'Неверно'}
-            </button>{!state.auctionEnabled && <button className="secondary" disabled={busy || !playerReady} onClick={() => startWithMusic('resume')}>Продолжить и слушать</button>}<button className="secondary" disabled={busy} onClick={() => command({ type: 'skip' })}>Пропустить песню</button></>}{state.status === 'revealed' && <button className="secondary" disabled={busy} onClick={() => command({ type: 'next' })}>Следующая песня по порядку</button>}</div>}
+            </button>}
+          {(state.status === 'selected' || (!state.auctionEnabled && state.status === 'lobby')) && <>
+            <button disabled={busy || state.players.length === 0 || !playerReady}
+              onClick={() => state.auctionEnabled ? command({ type: 'start' }) : startWithMusic('start')}>
+              {state.auctionEnabled ? 'Подготовить фрагмент' : 'Начать игру и слушать'}
+            </button>
+            {state.players.length === 0 && <p className="muted">Для начала нужен хотя бы один игрок.</p>}
+            {!playerReady && <p className="muted">Ожидаем загрузки плеера YouTube.</p>}
+          </>}
+          {state.status === 'playing' && <>
+            <button disabled={!playerReady || busy} onClick={playMusic}>
+              ▶ {state.auctionEnabled ? `Включить фрагмент · ${state.currentBid?.seconds ?? 0} сек` : 'Слушать'}
+            </button>
+            <button className="secondary" disabled={!playerReady} onClick={() => player.current?.pause()}>
+              ⏸ Пауза
+            </button>
+            <button className="secondary" disabled={busy} onClick={() => command({ type: 'skip' })}>Пропустить песню</button>
+          </>}
+          {state.auctionEnabled && state.status === 'awaitingJudgment' && <>
+            <p className="host-controls-note">
+              Фрагмент сам остановился. {bidLeader?.name ?? 'Победитель торгов'} называет ответ.
+            </p>
+            <button disabled={busy} onClick={() => command({ type: 'judge', correct: true })}>
+              ✓ Верно · +{state.currentBid?.points ?? state.song.points}
+            </button>
+            <button className="secondary" disabled={busy} onClick={() => command({ type: 'judge', correct: false })}>
+              ✕ Неверно · −{state.currentBid?.points ?? state.song.points}
+            </button>
+            <button className="secondary" disabled={busy} onClick={() => command({ type: 'skip' })}>Завершить без оценки</button>
+          </>}
+          {state.auctionEnabled && state.status === 'openAnswer' && <>
+            <button disabled={!playerReady || busy} onClick={replayMusic}>▶ Повторить мелодию</button>
+            <button className="secondary" disabled={!playerReady} onClick={() => player.current?.pause()}>⏸ Пауза</button>
+            <p className="host-controls-note">
+              Теперь STOP доступен любому, кроме победителя торгов, пока мелодия играет. Повторять можно сколько потребуется.
+            </p>
+            <button className="secondary" disabled={busy} onClick={() => command({ type: 'skip' })}>
+              Показать ответ и завершить раунд
+            </button>
+          </>}
+          {state.auctionEnabled && state.status === 'secondBuzzed' && <>
+            <p className="host-controls-note">{winner?.name ?? 'Игрок'} отвечает. Музыка на паузе.</p>
+            <button disabled={busy} onClick={() => command({ type: 'judge', correct: true })}>
+              ✓ Верно · +{state.song.points}
+            </button>
+            <button className="secondary" disabled={busy} onClick={() => command({ type: 'judge', correct: false })}>
+              ✕ Неверно · можно попробовать ещё
+            </button>
+            <button className="secondary" disabled={busy} onClick={() => command({ type: 'skip' })}>Показать ответ</button>
+          </>}
+          {!state.auctionEnabled && state.status === 'buzzed' && <>
+            <select aria-label="Кому начислить баллы" value={awardTo} onChange={e => setAwardTo(e.target.value)}>
+              <option value="">Баллы первому игроку</option>
+              {state.players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            <button disabled={busy} onClick={() => command({ type: 'judge', correct: true, ...(awardTo ? { playerId: awardTo } : {}) })}>
+              ✓ Верно · +{state.song.availablePoints ?? state.song.points}
+            </button>
+            <button className="secondary" disabled={busy} onClick={() => command({ type: 'judge', correct: false })}>✕ Неверно</button>
+            <button className="secondary" disabled={busy || !playerReady} onClick={() => startWithMusic('resume')}>▶ Продолжить</button>
+            <button className="secondary" disabled={busy} onClick={() => command({ type: 'skip' })}>Пропустить</button>
+          </>}
+          {['revealed','finished'].includes(state.status) && <>
+            <button className="secondary" disabled={!playerReady} onClick={replayMusic}>▶ Послушать песню целиком</button>
+            <button className="secondary" disabled={!playerReady} onClick={() => player.current?.pause()}>⏸ Пауза</button>
+          </>}
+          {state.status === 'revealed' && <>
+            {state.auctionEnabled && state.choiceOpen === false &&
+              <button disabled={busy} onClick={() => command({ type: 'allowChoice' })}>
+                Перейти к выбору следующей песни
+              </button>}
+            {(!state.auctionEnabled || state.choiceOpen !== false) &&
+              <button className="secondary" disabled={busy} onClick={() => command({ type: 'next' })}>
+                Следующая песня по порядку
+              </button>}
+          </>}
+        </div>}
       </section><aside className="stack"><section className="panel"><span className="eyebrow">УЧАСТНИКИ</span><h2>Таблица лидеров</h2>{state.players.length === 0 ? <p className="muted">Пока никого нет. Поделитесь кодом комнаты.</p> : [...state.players].sort((a,b) => b.score-a.score).map((p,i) => <div className="score" key={p.id}><span className="rank">{i+1}</span><strong>{p.name}</strong><b>{p.score}</b></div>)}</section>{session.role === 'host' && <><section className="panel"><span className="eyebrow">ПРИГЛАШЕНИЕ</span><h2>{session.room}</h2>{share ? <><p className="muted">Игроки сканируют QR-код и вводят своё имя.</p><div className="invite-qr"><QRCodeSVG value={share} size={180} marginSize={2} title="QR-код для входа в комнату" /></div><p className="invite-address">{share}</p><button className="secondary" onClick={() => { if (!navigator.clipboard) { setError('Скопируйте адрес приглашения вручную.'); return; } void navigator.clipboard.writeText(share).catch(() => setError('Не удалось скопировать ссылку')); }}>Скопировать ссылку</button><a className="display-link" target="_blank" rel="noreferrer" href={`${share}&display=1`}>Открыть экран для телевизора</a></> : <p className="muted">Не удалось определить адрес для телефона. Подключите компьютер к Wi-Fi и обновите страницу.</p>}</section><section className="panel"><span className="eyebrow">КОРРЕКТИРОВКА</span><h2>Изменить счёт</h2><select value={awardTo} onChange={e => setAwardTo(e.target.value)}><option value="">Выбрать игрока</option>{state.players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select><input aria-label="Изменение баллов" type="number" value={adjustment} onChange={e => setAdjustment(Number(e.target.value))} /><button className="secondary" disabled={busy || !awardTo} onClick={() => command({ type: 'adjust', playerId: awardTo, delta: adjustment, reason: 'Ручная корректировка ведущим' })}>Применить</button></section></>}</aside></div>}
   </main>;
 }
