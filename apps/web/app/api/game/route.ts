@@ -19,6 +19,7 @@ const requestSchema = z.discriminatedUnion('action', [
     z.object({ type: z.literal('bid'), id: z.string().uuid(), songId: z.string().uuid(),
       points: z.number().int().min(0).max(100000), seconds: z.number().int().min(2) }),
     z.object({ type: z.literal('closeBidding'), id: z.string().uuid() }),
+    z.object({ type: z.literal('allowChoice'), id: z.string().uuid() }),
     z.object({ type: z.literal('expire'), id: z.string().uuid(), songId: z.string().uuid() }),
     z.object({ type: z.literal('hint'), id: z.string().uuid() }),
     z.object({ type: z.literal('skip'), id: z.string().uuid() }),
