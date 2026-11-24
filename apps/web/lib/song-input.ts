@@ -8,4 +8,5 @@ export const songInput = z.object({
   startSeconds: z.number().int().min(0).max(86400).default(0),
   category: z.string().trim().min(1).max(60).default('Разное'),
   hints: z.array(z.string().trim().min(1).max(220)).max(3).default([]),
+  introHint: z.string().trim().max(220).default(''),
 });
