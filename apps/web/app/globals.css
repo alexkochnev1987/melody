@@ -276,3 +276,41 @@ header { height:88px; display:flex; align-items:center; gap:18px; border-bottom:
   .hint-tone-option { min-height: 86px; padding: 9px; }
   .hint-tone-option strong { font-size: 12px; }
 }
+
+
+/* A confirmed bid replaces the entire betting form until another player outbids it. */
+.player-screen__bid-confirmation {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: #2c3c2c;
+  border: 1px solid #99d36c;
+  text-align: center;
+}
+.player-screen__bid-confirmation strong { color: #c7f763; font-size: 17px; }
+.player-screen__bid-confirmation span { font-size: 19px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.player-screen__bid-confirmation small { color: #c7d8bf; font-size: 12px; line-height: 1.4; }
+.player-screen__bid-previous {
+  margin-bottom: 8px;
+  border: 1px solid #666077;
+  background: #342e43;
+  border-radius: 10px;
+  padding: 8px 12px;
+  color: #e3d7ee;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.second-chance-summary {
+  display: grid;
+  gap: 7px;
+  margin: 12px 0;
+  padding: 16px;
+  border-radius: 14px;
+  background: #26362c;
+  border: 1px solid #6ba36c;
+}
+.second-chance-summary strong { color: #c7f763; font-size: clamp(16px, 3vw, 23px); }
+.second-chance-summary p { margin: 0; line-height: 1.4; font-size: 14px; }
+.second-chance-summary span { color: #aebfb4; font-size: 12px; }
