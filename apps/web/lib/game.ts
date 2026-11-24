@@ -6,7 +6,7 @@ export type Bid = { playerId: string; points: number; seconds: number; songId: s
 export type Game = {
   id: string;
   revision: number;
-  status: 'lobby' | 'bidding' | 'selected' | 'playing' | 'buzzed' | 'revealed' | 'finished';
+  status: 'lobby' | 'bidding' | 'selected' | 'playing' | 'awaitingJudgment' | 'buzzed' | 'openAnswer' | 'secondBuzzed' | 'revealed' | 'finished';
   songs: Song[];
   songIndex: number;
   players: Player[];
@@ -25,6 +25,8 @@ export type Game = {
   auctionEnabled?: boolean;
   currentBid?: Bid | null;
   bidHistory?: Bid[];
+  /** Last revealed correct answer, kept until the next song is selected. */
+  roundResult?: { playerId: string; points: number } | null;
   /** Configured when this room was created. Existing legacy rooms may omit it. */
   startingPoints?: number;
   ownerId?: string;
@@ -68,8 +70,9 @@ export function hasActivePlayback(game: Game, now = Date.now()): boolean {
   const confirmedAt = Date.parse(game.playbackConfirmedAt ?? '');
   const leaseValid = game.playbackActive === true && Number.isFinite(confirmedAt) &&
     confirmedAt <= now && now - confirmedAt < PLAYBACK_LEASE_MS;
-  return leaseValid && (!game.auctionEnabled || !game.currentBid ||
-    playbackUsedMs(game, now) < game.currentBid.seconds * 1000);
+  return leaseValid && (game.status === 'openAnswer' ||
+    (!game.auctionEnabled || !game.currentBid ||
+      playbackUsedMs(game, now) < game.currentBid.seconds * 1000));
 }
 
 export function playedIds(game: Game): string[] {
@@ -189,6 +192,7 @@ export function applyCommand(game: Game, command: Command): Game {
       next.chooserId = null;
       next.hintLevel = 0;
       next.currentBid = null;
+      next.roundResult = null;
       resetClip();
       next.winnerId = null;
       next.blockedPlayerIds = [];
@@ -199,6 +203,9 @@ export function applyCommand(game: Game, command: Command): Game {
         throw new Error('Торги сейчас недоступны');
       }
       const bidder = player(command.playerId);
+      if (next.currentBid?.playerId === command.playerId) {
+        throw new Error('Нельзя перебивать собственную ставку');
+      }
       if (bidder.score <= 0) throw new Error('Для участия в торгах нужны очки');
       validateBid(command.points, command.seconds, song.points, next.currentBid);
       if (command.points > bidder.score) {
@@ -230,12 +237,15 @@ export function applyCommand(game: Game, command: Command): Game {
       break;
     case 'playback': {
       if (command.songId !== song.id) throw new Error('Сигнал воспроизведения относится к другой песне');
-      if (command.active && next.status !== 'playing') throw new Error('Нельзя включить STOP до начала раунда');
+      if (command.active && next.status !== 'playing' && next.status !== 'openAnswer') {
+        throw new Error('Воспроизведение доступно только во время раунда или второго шанса');
+      }
       if (next.playbackActive) {
         next.playbackElapsedMs = playbackUsedMs(next);
         next.playbackSegmentStartedAt = undefined;
       }
-      next.playbackActive = command.active && next.status === 'playing';
+      next.playbackActive = command.active &&
+        (next.status === 'playing' || next.status === 'openAnswer');
       next.playbackConfirmedAt = next.playbackActive ? new Date().toISOString() : undefined;
       if (next.playbackActive) {
         // Heartbeats may not reset the timer while playback is continuous.
@@ -248,9 +258,20 @@ export function applyCommand(game: Game, command: Command): Game {
     }
     case 'buzz':
       player(command.playerId);
-      if (next.status !== 'playing' || !hasActivePlayback(next) || command.songId !== song.id ||
-        next.blockedPlayerIds.includes(command.playerId) ||
-        (next.auctionEnabled && next.currentBid?.playerId !== command.playerId)) {
+      if (command.songId !== song.id || next.blockedPlayerIds.includes(command.playerId)) {
+        throw new Error('Нажатие недоступно');
+      }
+      if (next.auctionEnabled) {
+        if (next.status !== 'openAnswer' || next.currentBid?.playerId === command.playerId ||
+          !hasActivePlayback(next)) {
+          throw new Error('STOP доступен другим игрокам только во время повторного воспроизведения');
+        }
+        next.status = 'secondBuzzed';
+        next.winnerId = command.playerId;
+        next.playbackActive = false;
+        break;
+      }
+      if (next.status !== 'playing' || !hasActivePlayback(next)) {
         throw new Error('Нажатие недоступно');
       }
       next.status = 'buzzed';
@@ -258,17 +279,43 @@ export function applyCommand(game: Game, command: Command): Game {
       next.playbackActive = false;
       break;
     case 'judge':
-      if (next.status !== 'buzzed' || !next.winnerId) throw new Error('Нет ответа для оценки');
-      if (next.auctionEnabled) {
-        if (!next.currentBid || next.winnerId !== next.currentBid.playerId ||
-          (command.playerId && command.playerId !== next.currentBid.playerId)) {
-          throw new Error('Оценить можно только победителя аукциона');
+      if (!['awaitingJudgment', 'buzzed', 'secondBuzzed'].includes(next.status) ||
+        !next.winnerId) throw new Error('Нет ответа для оценки');
+      if (next.auctionEnabled && next.status === 'secondBuzzed') {
+        if (command.playerId && command.playerId !== next.winnerId) {
+          throw new Error('Оценить можно только остановившего мелодию игрока');
         }
-        award(next.currentBid.playerId, command.correct ? roundPoints(next) : -roundPoints(next),
+        if (command.correct) {
+          next.roundResult = { playerId: next.winnerId, points: song.points };
+          award(next.winnerId, song.points, 'Второй шанс: правильный ответ');
+          completeRound(next.winnerId);
+        } else {
+          // The host will replay; other players (except the bidder) may try
+          // again, until one of them succeeds or the host closes the round.
+          next.winnerId = null;
+          next.status = 'openAnswer';
+          next.playbackActive = false;
+        }
+      } else if (next.auctionEnabled) {
+        if (next.status !== 'awaitingJudgment' || !next.currentBid ||
+          next.winnerId !== next.currentBid.playerId ||
+          (command.playerId && command.playerId !== next.currentBid.playerId)) {
+          throw new Error('Оценить можно только победителя аукциона после фрагмента');
+        }
+        const points = roundPoints(next);
+        award(next.currentBid.playerId, command.correct ? points : -points,
           command.correct ? 'Аукцион: правильный ответ' : 'Аукцион: неправильный ответ');
-        completeRound(command.correct ? next.currentBid.playerId : null);
+        if (command.correct) {
+          next.roundResult = { playerId: next.currentBid.playerId, points };
+          completeRound(next.currentBid.playerId);
+        } else {
+          next.status = 'openAnswer';
+          next.winnerId = null;
+          resetClip();
+        }
       } else if (command.correct) {
         const correctId = command.playerId ?? next.winnerId;
+        next.roundResult = { playerId: correctId, points: roundPoints(next) };
         award(correctId, roundPoints(next), 'Правильный ответ');
         completeRound(correctId);
       } else {
@@ -281,8 +328,11 @@ export function applyCommand(game: Game, command: Command): Game {
     case 'expire':
       if (!next.auctionEnabled || next.status !== 'playing' || command.songId !== song.id ||
         !next.currentBid) throw new Error('Сейчас нельзя завершить прослушивание');
-      award(next.currentBid.playerId, -next.currentBid.points, 'Аукцион: время истекло');
-      completeRound(null);
+      // The wager does NOT fail because the scheduled clip ended. The host
+      // now hears the bidder's answer and explicitly chooses correct/wrong.
+      next.status = 'awaitingJudgment';
+      next.winnerId = next.currentBid.playerId;
+      resetClip();
       break;
     case 'resume':
       if (next.auctionEnabled || next.status !== 'buzzed') throw new Error('Продолжение раунда недоступно');
@@ -306,7 +356,10 @@ export function applyCommand(game: Game, command: Command): Game {
       next.hintLevel++;
       break;
     case 'skip':
-      if (next.status !== 'playing' && next.status !== 'buzzed') throw new Error('Нельзя пропустить этот раунд');
+      if (!['playing', 'buzzed', 'awaitingJudgment', 'openAnswer', 'secondBuzzed'].includes(next.status)) {
+        throw new Error('Нельзя пропустить этот раунд');
+      }
+      next.roundResult = null;
       completeRound(null);
       break;
     case 'next': {
@@ -317,6 +370,7 @@ export function applyCommand(game: Game, command: Command): Game {
       next.status = next.auctionEnabled ? 'bidding' : 'selected';
       next.chooserId = null;
       next.currentBid = null;
+      next.roundResult = null;
       next.hintLevel = 0;
       resetClip();
       next.winnerId = null;
@@ -346,6 +400,7 @@ export function publicGame(game: Game) {
     startingPoints: game.startingPoints ?? (game.auctionEnabled ? DEFAULT_STARTING_POINTS : 0),
     currentBid: game.auctionEnabled ? game.currentBid ?? null : null,
     bidHistory: game.auctionEnabled ? game.bidHistory ?? [] : [],
+    roundResult: ['revealed', 'finished'].includes(game.status) ? game.roundResult ?? null : null,
     round: Math.min(game.songs.length, Math.max(1, currentRound)), totalRounds: game.songs.length,
     players: game.players, winnerId: game.winnerId, chooserId: game.chooserId ?? null,
     blockedPlayerIds: game.blockedPlayerIds, playbackActive: hasActivePlayback(game),
