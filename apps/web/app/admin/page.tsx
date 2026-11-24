@@ -1,5 +1,7 @@
 'use client';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ALL_HINTS, canStartHintTask, songHintKey, type HintOperation, type HintTasks } from '@/lib/hint-activity';
+import type { HumorStyle } from '@/lib/humor-style';
 import { authClient } from '@/lib/auth-client';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -12,6 +14,13 @@ type Catalog = { games: GameSet[]; user: Viewer | null; googleConfigured: boolea
 
 const blankSong = (): Track => ({ title: '', artist: '', youtubeId: '', points: 10, startSeconds: 0, category: 'Разное', hints: [], introHint: '' });
 const emptyGame = (): GameSet => ({ id: '', owner_id: '', title: '', description: '', songs: [] });
+const humorModes: { id: HumorStyle; title: string; example: string }[] = [
+  { id: 'conversational', title: 'Как друг', example: 'Живая фраза, словно за столом с друзьями' },
+  { id: 'ironic', title: 'С иронией', example: 'Лёгкая самоирония, без злости' },
+  { id: 'absurd', title: 'Немного абсурда', example: 'Смешной неожиданный поворот' },
+  { id: 'warm', title: 'Добрый юмор', example: 'Просто, понятно и без колкостей' },
+];
+type HintFeedback = { text: string; error: boolean };
 async function post(body: unknown) {
   const res = await fetch('/api/sets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const data = await res.json();
@@ -31,7 +40,12 @@ export default function Admin() {
   const [startingPoints, setStartingPoints] = useState(300);
   const [history, setHistory] = useState<HistoricGame[]>([]);
   const [historyError, setHistoryError] = useState('');
-  const [hintNotice, setHintNotice] = useState('');
+  const [humorStyle, setHumorStyle] = useState<HumorStyle>('conversational');
+  const [humorBrief, setHumorBrief] = useState('');
+  const [hintTasks, setHintTasks] = useState<HintTasks>({});
+  const hintTasksRef = useRef<Record<string, HintOperation>>({});
+  const [hintFeedback, setHintFeedback] = useState<Record<string, HintFeedback>>({});
+  const anyHintBusy = Object.keys(hintTasks).length > 0;
   const refresh = useCallback(async () => {
     const res = await fetch('/api/sets', { cache: 'no-store' });
     if (!res.ok) throw new Error('Не удалось загрузить игры');
@@ -76,81 +90,118 @@ export default function Admin() {
       setEditing({ ...editing, songs: [...editing.songs, ...data.songs.map((s: { title: string; artist: string; youtubeId: string; category?: string; hints?: string[] }) => ({ title: s.title, artist: s.artist, youtubeId: s.youtubeId || '', points: 10, startSeconds: 0, category: s.category || 'Разное', hints: s.hints ?? [] }))] });
     });
   }
+  /**
+   * Ref synchronously reserves the operation before React re-renders:
+   * simultaneous clicks cannot start the same request twice.
+   * Other song cards remain interactive; a bulk job is exclusive.
+   */
+  async function runHintTask(key: string, operation: HintOperation, work: () => Promise<string>) {
+    if (busy || !canStartHintTask(hintTasksRef.current, key)) return;
+    const started = { ...hintTasksRef.current, [key]: operation };
+    hintTasksRef.current = started;
+    setHintTasks(started);
+    setHintFeedback(old => ({ ...old, [key]: { text: '', error: false } }));
+    try {
+      const message = await work();
+      setHintFeedback(old => ({ ...old, [key]: { text: message, error: false } }));
+    } catch (e) {
+      setHintFeedback(old => ({ ...old, [key]: {
+        text: e instanceof Error ? e.message : 'Не удалось выполнить действие',
+        error: true,
+      } }));
+    } finally {
+      const next = { ...hintTasksRef.current };
+      delete next[key];
+      hintTasksRef.current = next;
+      setHintTasks(next);
+    }
+  }
+
   async function generateHints(indices?: number[]) {
     if (!editing) return;
-    const currentGame = editing;
-    const selected = indices ?? currentGame.songs.map((_, index) => index);
-    if (!selected.length || selected.some(index => !currentGame.songs[index]?.title.trim() ||
-        !currentGame.songs[index]?.artist.trim())) {
-      setError('Сначала укажи название и исполнителя для каждой выбранной песни.');
+    const snapshot = editing;
+    const selected = indices ?? snapshot.songs.map((_, index) => index);
+    const key = indices?.length === 1 ? songHintKey(indices[0]) : ALL_HINTS;
+    if (!selected.length || selected.some(index => !snapshot.songs[index]?.title.trim() ||
+      !snapshot.songs[index]?.artist.trim())) {
+      setHintFeedback(old => ({ ...old, [key]: {
+        text: 'Сначала укажи название и исполнителя для выбранных песен.',
+        error: true,
+      } }));
       return;
     }
-    setHintNotice('');
-    await perform(async () => {
-      const updates = new Map<number, string[]>();
+    await runHintTask(key, 'generate', async () => {
+      let succeeded = 0;
       let failed = 0;
-      // Smaller batches keep structured output within model limits.
+      const preferences = { style: humorStyle, humorBrief: humorBrief.trim() };
       for (let offset = 0; offset < selected.length; offset += 15) {
         const batch = selected.slice(offset, offset + 15);
-        const songs = batch.map(i => ({
-          title: currentGame.songs[i].title,
-          artist: currentGame.songs[i].artist,
-          category: currentGame.songs[i].category || 'Разное',
+        const songs = batch.map(index => ({
+          title: snapshot.songs[index].title,
+          artist: snapshot.songs[index].artist,
+          category: snapshot.songs[index].category || 'Разное',
         }));
         const res = await fetch('/api/hints', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ songs }),
+          body: JSON.stringify({ songs, ...preferences }),
         });
         const data: { songs?: { index: number; hints: string[] }[]; error?: string } = await res.json();
         if (!res.ok) throw new Error(data.error || 'Не удалось создать подсказки');
+        const updates = new Map<number, string[]>();
         for (const result of data.songs ?? []) {
-          const i = batch[result.index];
-          if (i === undefined) continue;
-          if (result.hints.length === 3) updates.set(i, result.hints);
+          const index = batch[result.index];
+          if (index === undefined) continue;
+          if (result.hints.length === 3) { updates.set(index, result.hints); succeeded++; }
           else failed++;
         }
-      }
-      setEditing(current => {
-        if (!current || current.id !== currentGame.id) return current;
-        return {
-          ...current,
-          songs: current.songs.map((song, index) => {
-            const expected = currentGame.songs[index];
+        // Apply each batch immediately. Successful results survive a later batch failure.
+        setEditing(current => {
+          if (!current || current.id !== snapshot.id) return current;
+          return { ...current, songs: current.songs.map((song, index) => {
+            const expected = snapshot.songs[index];
             const hints = updates.get(index);
-            if (!hints || !expected || song.title !== expected.title || song.artist !== expected.artist) return song;
+            if (!hints || !expected || song.title !== expected.title ||
+              song.artist !== expected.artist || song.youtubeId !== expected.youtubeId) return song;
             return { ...song, hints, introHint: song.introHint?.trim() || hints[0] };
-          }),
-        };
-      });
-      if (failed) setError(`Для ${failed} песен подсказки не прошли проверку. Повтори генерацию для них.`);
-      if (updates.size) setHintNotice(indices?.length === 1
-        ? 'Три варианта подсказки готовы. Выбери один, при необходимости исправь текст и сохрани песню.'
-        : `Подсказки заполнены для ${updates.size} песен. Проверь и нажми «Сохранить все подсказки».`);
+          }) };
+        });
+      }
+      if (!succeeded) throw new Error('Подсказки не прошли проверку. Попробуй другие пожелания к юмору.');
+      const savedMessage = indices?.length === 1
+        ? 'Три варианта готовы. Выбери понравившийся и сохрани подсказку этой песни.'
+        : `Варианты готовы для ${succeeded} песен. Выбери шутки и сохрани все подсказки.`;
+      return failed ? `${savedMessage} Для ${failed} песен AI не создал подходящих вариантов.` : savedMessage;
     });
   }
 
   async function saveHints(indices?: number[]) {
     if (!editing) return;
-    if (!editing.id) {
-      setError('Сначала сохрани новую игру, затем отдельно сохраняй подсказки.');
+    const game = editing;
+    const selected = indices ?? game.songs.map((_, index) => index);
+    const key = indices?.length === 1 ? songHintKey(indices[0]) : ALL_HINTS;
+    if (!game.id) {
+      setHintFeedback(old => ({ ...old, [key]: {
+        text: 'Сначала сохрани новую игру, затем отдельно сохраняй подсказки.',
+        error: true,
+      } }));
       return;
     }
-    const selected = indices ?? editing.songs.map((_, index) => index);
     if (!selected.length) return;
-    const game = editing;
-    setHintNotice('');
-    await perform(async () => {
+    await runHintTask(key, 'save', async () => {
       const updates = selected.map(index => {
         const song = game.songs[index];
-        return { index, title: song.title, artist: song.artist, youtubeId: song.youtubeId,
-          hints: (song.hints ?? []).map(hint => hint.trim()).filter(Boolean), introHint: song.introHint?.trim() ?? '' };
+        return {
+          index, title: song.title, artist: song.artist, youtubeId: song.youtubeId,
+          hints: (song.hints ?? []).map(hint => hint.trim()).filter(Boolean),
+          introHint: song.introHint?.trim() ?? '',
+        };
       });
       await post({ action: 'saveHints', id: game.id, updates });
       await refresh();
-      setHintNotice(indices?.length === 1
-        ? 'Предыгровая подсказка сохранена. Остальные песни не изменены.'
-        : 'Подсказки всех песен сохранены в базе.');
+      return indices?.length === 1
+        ? 'Сохранено! Остальные песни не изменились.'
+        : 'Все выбранные подсказки сохранены.';
     });
   }
 
@@ -176,7 +227,15 @@ export default function Admin() {
   }
   const readonly = editing?.owner_id === null;
   const invalidCount = !Number.isInteger(count) || count < 1 || count > 30;
-  const patchTrack = (index: number, update: Partial<Track>) => setEditing(g => g ? { ...g, songs: g.songs.map((s, i) => i === index ? { ...s, ...update } : s) } : g);
+  const patchTrack = (index: number, update: Partial<Track>) => {
+    setHintFeedback(old => {
+      const next = { ...old };
+      delete next[songHintKey(index)];
+      delete next[ALL_HINTS];
+      return next;
+    });
+    setEditing(g => g ? { ...g, songs: g.songs.map((s, i) => i === index ? { ...s, ...update } : s) } : g);
+  };
   const moveTrack = (index: number, offset: number) => setEditing(g => {
     if (!g || index + offset < 0 || index + offset >= g.songs.length) return g;
     const next = [...g.songs]; [next[index], next[index + offset]] = [next[index + offset], next[index]];
