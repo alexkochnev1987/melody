@@ -20,6 +20,9 @@ export default function PlayerScreen({ state, playerId, room, connected, busy, o
   const choosing = state.status === 'revealed' && state.chooserId === playerId;
   const bidding = state.auctionEnabled === true && state.status === 'bidding';
   const preparing = state.auctionEnabled === true && state.status === 'selected';
+  const ownBid = bidding && state.currentBid?.playerId === playerId;
+  const latestOwnBid = bidding ? [...(state.bidHistory ?? [])].reverse().find(bid => bid.playerId === playerId) : undefined;
+  const secondChance = state.auctionEnabled && ['openAnswer','secondBuzzed'].includes(state.status);
   const onStop = () => {
     if (!view.canBuzz) return;
     if (typeof navigator.vibrate === 'function') navigator.vibrate(25);
@@ -61,6 +64,10 @@ export default function PlayerScreen({ state, playerId, room, connected, busy, o
             {state.status === 'playing' && <span>Осталось ~{Math.max(0, Math.ceil(state.remainingSeconds ?? state.currentBid.seconds))} с</span>}
           </div>}
         {view.answer && <div className="player-screen__answer"><span>ПРАВИЛЬНЫЙ ОТВЕТ</span><strong>{view.answer}</strong></div>}
+        {secondChance && <div className="player-screen__active-bid" role="status">
+          <strong>Второй шанс · +{state.song.points} очков</strong>
+          <span>Фрагмент уже закончился. Музыка больше не запускается.</span>
+        </div>}
         {(bidding || preparing) && <div className="player-screen__auction">
           <AuctionSummary bid={state.currentBid} players={state.players}
             category={state.song.category ?? 'Разное'} nominal={state.song.points} introHint={state.introHint} />
@@ -76,10 +83,19 @@ export default function PlayerScreen({ state, playerId, room, connected, busy, o
       </div>
 
       {bidding && <div className="player-screen__bid-action">
-        <AuctionBidForm key={state.currentBid?.commandId ?? 'first'}
-          bid={state.currentBid} players={state.players} category={state.song.category ?? 'Разное'}
-          nominal={state.song.points} balance={state.players.find(p => p.id === playerId)?.score ?? 0}
-          disabled={!connected || busy} onBid={onBid} />
+        {ownBid ? <div className="player-screen__bid-confirmation" role="status">
+          <strong>✓ Твоя ставка принята</strong>
+          <span>{state.currentBid?.points} очков · {state.currentBid?.seconds} секунд</span>
+          <small>Ты лидируешь. Повышать собственную ставку нельзя — жди других игроков.</small>
+        </div> : <>
+          {latestOwnBid && <div className="player-screen__bid-previous" role="status">
+            Твою ставку {latestOwnBid.points} очков / {latestOwnBid.seconds} сек перебили.
+          </div>}
+          <AuctionBidForm key={state.currentBid?.commandId ?? 'first'}
+            bid={state.currentBid} players={state.players} category={state.song.category ?? 'Разное'}
+            nominal={state.song.points} balance={state.players.find(p => p.id === playerId)?.score ?? 0}
+            disabled={!connected || busy} onBid={onBid} />
+        </>}
       </div>}
 
       {!choosing && !bidding && !preparing && <div className="player-screen__action">
