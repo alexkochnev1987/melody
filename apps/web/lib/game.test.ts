@@ -71,7 +71,7 @@ test('only winning bidder can buzz, the server does not trust player IDs', () =>
   assert.equal(g.status, 'buzzed');
   assert.throws(() => exec(g, { type: 'judge', id: 'change', correct: true, playerId: 'two' }), /победителя/);
   g = exec(g, { type: 'judge', id: 'correct', correct: true });
-  assert.equal(g.players.find(x=>x.id==='one')?.score, 50);
+  assert.equal(g.players.find(x=>x.id==='one')?.score, 350);
   assert.equal(g.chooserId, 'one');
   assert.deepEqual(g.playedSongIds,['a']);
   assert.equal(g.status, 'revealed');
@@ -81,13 +81,13 @@ test('wrong answer and expired listening time lose bid and finish the round', ()
   let g = prepared();
   g = exec(g, { type: 'buzz', id: 'answer', playerId: 'one', songId: 'a' });
   g = exec(g, { type: 'judge', id: 'wrong', correct: false });
-  assert.equal(g.players[0].score, -50);
+  assert.equal(g.players[0].score, 250);
   assert.equal(g.status, 'revealed');
   assert.equal(g.chooserId, null);
   assert.equal(g.scoreEvents.at(-1)?.reason, 'Аукцион: неправильный ответ');
   let timeout = prepared();
   timeout = exec(timeout,{type:'expire',id:'timeout',songId:'a'});
-  assert.equal(timeout.players[0].score,-50);
+  assert.equal(timeout.players[0].score,250);
   assert.equal(timeout.scoreEvents.at(-1)?.reason,'Аукцион: время истекло');
   assert.equal(timeout.status,'revealed');
   assert.throws(()=>exec(timeout,{type:'expire',id:'again',songId:'a'}));
@@ -136,7 +136,7 @@ test('legacy stored rooms continue with old start and STOP semantics', () => {
   g = exec(g,{type:'playback',id:'legacy-playing',songId:'a',active:true});
   g = exec(g,{type:'buzz',id:'legacy-buzz',playerId:'two',songId:'a'});
   g = exec(g,{type:'judge',id:'legacy-judge',correct:true});
-  assert.equal(g.players[1].score,50);
+  assert.equal(g.players[1].score,300);
   assert.equal(g.chooserId,'two');
 });
 
@@ -150,7 +150,36 @@ test('finished auction records both stake and score results', () => {
   g = exec(g,{type:'playback',id:'play',songId:'a',active:true});
   g = exec(g,{type:'expire',id:'expire',songId:'a'});
   assert.equal(g.status,'finished');
-  assert.equal(g.players[0].score,-60);
+  assert.equal(g.players[0].score,240);
   assert.equal(g.bidHistory?.length,1);
   assert.ok(g.endedAt);
+});
+
+test('every participant receives 300 initial points by default and custom balance is preserved', () => {
+  const newRoom = room();
+  assert.equal(newRoom.startingPoints, 300);
+  assert.deepEqual(newRoom.players.map(p => p.score), [300, 300]);
+  let custom = createGame('custom', songs, undefined, 450);
+  custom = exec(custom, { type: 'join', id: 'join-custom', playerId: 'new', name: 'New' });
+  assert.equal(custom.players[0].score, 450);
+  assert.equal(publicGame(custom).startingPoints, 450);
+  assert.throws(() => createGame('bad', songs, undefined, 0), /от 1/);
+  assert.throws(() => createGame('bad', songs, undefined, 1.5), /от 1/);
+});
+
+test('auction forbids wagering more than current balance or with zero points', () => {
+  let game = auction();
+  assert.throws(() => exec(game, { type: 'bid', id: 'too-high', songId: 'a',
+    playerId: 'one', points: 301, seconds: 3 }), /Недостаточно очков/);
+  game = exec(game, { type: 'adjust', id: 'reduce', playerId: 'one',
+    delta: -300, reason: 'Test spend' });
+  assert.throws(() => exec(game, { type: 'bid', id: 'empty', songId: 'a',
+    playerId: 'one', points: 50, seconds: 3 }), /нужны очки/);
+  assert.throws(() => exec(game, { type: 'bid', id: 'nominal', songId: 'a',
+    playerId: 'two', points: 301, seconds: 3 }), /Недостаточно/);
+  game = exec(game, { type: 'bid', id: 'full', songId: 'a',
+    playerId: 'two', points: 300, seconds: 3 });
+  assert.equal(game.currentBid?.points, 300);
+  assert.throws(() => exec(game, { type: 'adjust', id: 'reduce-active', playerId: 'two',
+    delta: -1, reason: 'Manual change' }), /ниже уже принятой ставки/);
 });
