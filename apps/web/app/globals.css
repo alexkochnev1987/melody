@@ -227,3 +227,52 @@ header { height:88px; display:flex; align-items:center; gap:18px; border-bottom:
 .player-screen__active-bid { display: grid; justify-items: center; gap: 3px; padding: 8px 12px; border-radius: 12px; background: #272b36; max-width: 100%; }
 .player-screen__active-bid strong { color: #c7f763; font-size: clamp(12px, 3.2vw, 16px); }
 .player-screen__active-bid span { color: #bfc0d0; font-size: 12px; }
+
+
+/* Humor style is intentionally separate from generated options and persistence. */
+.hint-tone-panel {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  margin: 20px 0 16px;
+  border: 1px solid #54506f;
+  border-radius: 16px;
+  background: #222032;
+}
+.hint-tone-panel h3 { margin: 0; font-size: 19px; }
+.hint-tone-panel p { margin: 0; font-size: 13px; }
+.hint-tone-panel label { margin: 0; font-size: 13px; font-weight: 650; }
+.hint-tone-panel textarea { margin: 8px 0 0; width: 100%; min-height: 88px; }
+.hint-tone-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); gap: 9px; }
+.hint-tone-option {
+  width: 100%;
+  min-height: 82px;
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  text-align: left;
+  padding: 12px;
+  border: 1px solid #4b4b65;
+  background: #2e2c40;
+  color: #f1f0fc;
+}
+.hint-tone-option strong { font-size: 13px; }
+.hint-tone-option span { color: #b7b7ca; font-weight: 450; font-size: 11px; line-height: 1.4; }
+.hint-tone-option--selected { border-color: #c7f763; background: #323e2c; }
+.hint-tone-option:focus-visible { outline: 3px solid #c7f763; outline-offset: 2px; }
+.hint-job-success, .hint-job-error {
+  margin: 4px 0;
+  padding: 9px 12px;
+  border-radius: 9px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.hint-job-success { background: #24362a; color: #ccf6c4; }
+.hint-job-error { background: #43262d; color: #ffcbce; }
+.hint-editor[aria-busy="true"] { border: 1px solid #595976; }
+@media(max-width: 620px) {
+  .hint-tone-panel { padding: 12px; }
+  .hint-tone-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hint-tone-option { min-height: 86px; padding: 9px; }
+  .hint-tone-option strong { font-size: 12px; }
+}
