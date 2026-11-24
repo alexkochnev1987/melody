@@ -98,7 +98,7 @@ const HostPlayer = forwardRef<HostPlayerHandle, Props>(function HostPlayer({
       player.current = new YT.Player(node, {
         videoId,
         playerVars: {
-          start: startSeconds,
+          start: startSeconds + initialPlayed.current,
           // Native end offers a fallback if browser timers are throttled.
           ...(listenSeconds ? { end: startSeconds + listenSeconds } : {}),
           playsinline: 1,
@@ -111,7 +111,18 @@ const HostPlayer = forwardRef<HostPlayerHandle, Props>(function HostPlayer({
             playing = event.data === 1;
             lastPosition = null;
             onPlaybackChange(playing);
-            if (event.data === 0 && listenSeconds) finish();
+            if (event.data === 0 && listenSeconds) {
+              const position = player.current?.getCurrentTime() ?? 0;
+              // Do not charge the player's stake if the video ends before the
+              // wagered fragment was available (short/blocked uploads).
+              if (playedSeconds + 0.55 >= listenSeconds ||
+                position + 0.55 >= startSeconds + listenSeconds) {
+                finish();
+              } else {
+                onPlaybackChange(false);
+                onError();
+              }
+            }
           },
           onAutoplayBlocked: () => {
             if (active) { playing = false; lastPosition = null; onPlaybackChange(false); onPlaybackBlocked(); }
