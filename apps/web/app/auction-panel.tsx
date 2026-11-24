@@ -1,0 +1,81 @@
+'use client';
+
+import { useState } from 'react';
+import type { Player } from '@/lib/game';
+type PublicBid = { playerId: string; points: number; seconds: number; commandId: string };
+
+type Shared = {
+  bid?: PublicBid | null;
+  players: Player[];
+  category: string;
+  nominal: number;
+  introHint?: string | null;
+};
+
+/** Same read-only auction snapshot is shown on player, host and TV. */
+export function AuctionSummary({ bid, players, category, nominal, introHint }: Shared) {
+  const leader = bid ? players.find(player => player.id === bid.playerId) : null;
+  return <section className="auction-summary" aria-live="polite">
+    <div className="auction-summary__heading">
+      <span>♫ {category}</span><span>Номинал: {nominal} очков</span>
+    </div>
+    {introHint && <blockquote className="auction-summary__hint"><span>ШУТОЧНАЯ ПОДСКАЗКА</span>{introHint}</blockquote>}
+    {bid ? <div className="auction-summary__leader">
+      <div className="auction-summary__label">ЛИДИРУЮЩАЯ СТАВКА</div>
+      <strong>{leader?.name ?? 'Игрок'}</strong>
+      <div className="auction-summary__values">
+        <div><b>{bid.points}</b><span>очков</span></div>
+        <span className="auction-summary__divider">/</span>
+        <div><b>{bid.seconds}</b><span>секунд</span></div>
+      </div>
+    </div> : <div className="auction-summary__empty">Ставок пока нет — стань первым!</div>}
+  </section>;
+}
+
+type FormProps = Shared & {
+  disabled: boolean;
+  onBid: (points: number, seconds: number) => void;
+  balance: number;
+};
+
+export function AuctionBidForm({ bid, nominal, balance, disabled, onBid }: FormProps) {
+  const [pointsInput, setPointsInput] = useState(String(bid?.points ?? nominal));
+  const [secondsInput, setSecondsInput] = useState(String(bid?.seconds ?? 10));
+  const points = Number(pointsInput);
+  const seconds = Number(secondsInput);
+  const good = pointsInput.trim() !== '' && secondsInput.trim() !== '' &&
+    Number.isSafeInteger(points) && points >= nominal && points <= 100000 && points <= balance && balance > 0 &&
+    Number.isSafeInteger(seconds) && seconds >= 2 &&
+    (!bid || (points >= bid.points && seconds <= bid.seconds &&
+      (points > bid.points || seconds < bid.seconds)));
+  const reason = balance <= 0 ? 'Очки закончились — ты пока не можешь делать ставки' : !Number.isSafeInteger(points) || points < nominal || points > 100000
+    ? `Не меньше ${nominal} и не больше 100 000 очков`
+    : points > balance ? `На балансе ${balance} очков. Ставка не может быть выше` : !Number.isSafeInteger(seconds) || seconds < 2
+      ? 'Минимум 2 секунды, только целое число'
+      : !good ? 'Увеличь очки или уменьши время, не ухудшая другой показатель' : '';
+
+  return <section className="auction-bid-form" aria-label="Сделать ставку">
+    <p className="auction-bid-form__balance">Твой баланс: <strong>{balance} очков</strong></p>
+    <div className="auction-bid-form__fields">
+      <label>Очки
+        <input type="number" inputMode="numeric" min={nominal} max={100000} step="1"
+          value={pointsInput} onChange={e => setPointsInput(e.target.value)} aria-label="Очки ставки" />
+      </label>
+      <label>Секунды
+        <input type="number" inputMode="numeric" min="2" step="1"
+          value={secondsInput} onChange={e => setSecondsInput(e.target.value)} aria-label="Время ставки в секундах" />
+      </label>
+    </div>
+    <div className="auction-bid-form__quick">
+      <button type="button" className="secondary" disabled={disabled || points > balance - 10 || points > 99990}
+        onClick={() => setPointsInput(String(Math.min(balance, 100000, Math.max(points, bid?.points ?? nominal) + 10)))}>+10 очков</button>
+      <button type="button" className="secondary" disabled={disabled || seconds <= 2}
+        onClick={() => setSecondsInput(String(Math.max(2, Math.min(seconds, bid?.seconds ?? seconds) - 1)))}>−1 секунда</button>
+    </div>
+    {reason && <p className="auction-bid-form__error" role="status">{reason}</p>}
+    <p className="auction-bid-form__rules">Угадал: +{Number.isSafeInteger(points) ? points : '—'} · Ошибка или время вышло: −{Number.isSafeInteger(points) ? points : '—'}</p>
+    <button type="button" disabled={disabled || !good} onClick={() => onBid(points,seconds)}>
+      {bid ? 'Перебить ставку' : 'Сделать ставку'}
+    </button>
+  </section>;
+}

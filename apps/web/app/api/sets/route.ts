@@ -13,12 +13,13 @@ const hintUpdate = z.object({
   artist: z.string().min(1).max(120),
   youtubeId: z.string().max(40),
   hints: z.array(z.string().trim().min(1).max(220)).max(3),
+  introHint: z.string().trim().max(220).optional(),
 });
 const bodySchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('saveHints'), id: z.string().min(1), updates: z.array(hintUpdate).min(1).max(100) }),
   z.object({ action: z.literal('save'), id: z.string().optional(), title: z.string().trim().min(1).max(100), description: z.string().max(500), songs: z.array(song).max(100) }),
   z.object({ action: z.literal('copy'), id: z.string().min(1) }),
-  z.object({ action: z.literal('start'), id: z.string().min(1) }),
+  z.object({ action: z.literal('start'), id: z.string().min(1), startingPoints: z.number().int().min(1).max(100000).default(300) }),
 ]);
 type Song = z.infer<typeof song>;
 type GameSet = { id: string; owner_id: string | null; title: string; description: string; songs: Song[] };
@@ -76,7 +77,7 @@ export async function POST(req: Request) {
     const songs = z.array(song).min(1).parse(selected.songs);
     const room = randomBytes(4).toString('hex').slice(0, 6).toUpperCase();
     const hostToken = randomBytes(32).toString('base64url');
-    const game = createGame(room, songs.map(s => ({ ...s, id: randomUUID() })), session.user.id);
+    const game = createGame(room, songs.map(s => ({ ...s, id: randomUUID() })), session.user.id, body.startingPoints);
     await db.query('INSERT INTO rooms(id,host_token,state) VALUES ($1,$2,$3)', [room, hostToken, JSON.stringify(game)]);
     return json({ room, token: hostToken }, 201);
   } catch (err) {

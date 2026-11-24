@@ -1,136 +1,211 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyCommand, createGame, publicGame, roundPoints } from './game.ts';
+import { applyCommand, createGame, publicGame, hasActivePlayback, playbackUsedMs, validateBid } from './game.ts';
 
 const songs = [
-  { id: 'a', title: 'Secret song', artist: 'Hidden artist', youtubeId: 'abcdefghijk', points: 50, category: 'Pop', hints: ['A joke about waiting', 'A suspicious dance floor', 'Almost a giveaway'] },
-  { id: 'b', title: 'Other song', artist: 'Another artist', youtubeId: '12345678901', points: 30, category: 'Rock', hints: [] },
-  { id: 'c', title: 'Final song', artist: 'Final artist', youtubeId: '12345abcdef', points: 20, category: 'Pop', hints: [] },
+  { id: 'a', title: 'Secret song', artist: 'Hidden artist', youtubeId: 'abcdefghijk', points: 50,
+    category: 'Pop', introHint: 'Вас ждёт весёлая загадка', hints: ['old hint 1','old hint 2'] },
+  { id: 'b', title: 'Other song', artist: 'Another artist', youtubeId: '12345678901', points: 30,
+    category: 'Rock', introHint: 'Другая история' },
 ];
-const cmd = (game: ReturnType<typeof createGame>, command: Parameters<typeof applyCommand>[1]) => applyCommand(game, command);
-function playing() {
-  let game = createGame('room', songs, 'owner');
-  game = cmd(game, { type: 'join', id: 'join-1', playerId: 'one', name: 'Anna' });
-  game = cmd(game, { type: 'join', id: 'join-2', playerId: 'two', name: 'Max' });
-  game = cmd(game, { type: 'start', id: 'start' });
-  return cmd(game, { type: 'playback', id: 'playback-start', songId: 'a', active: true });
+type G = ReturnType<typeof createGame>;
+const exec = (g: G, cmd: Parameters<typeof applyCommand>[1]) => applyCommand(g, cmd);
+function room() {
+  let g = createGame('room', songs, 'owner');
+  g = exec(g, { type: 'join', id: 'j1', playerId: 'one', name: 'Anna' });
+  g = exec(g, { type: 'join', id: 'j2', playerId: 'two', name: 'Max' });
+  return g;
 }
-test('correct answer gives chosen player the next pick and persists the score', () => {
-  let game = playing();
-  game = cmd(game, { type: 'buzz', id: 'buzz', songId: 'a', playerId: 'one' });
-  game = cmd(game, { type: 'judge', id: 'judge', correct: true });
-  assert.equal(game.chooserId, 'one');
-  assert.equal(game.status, 'revealed');
-  assert.equal(game.players[0].score, 50);
-  assert.deepEqual(game.playedSongIds, ['a']);
-  assert.equal(publicGame(game).board[0].played, true);
-  assert.throws(() => cmd(game, { type: 'choose', id: 'bad', songId: 'b', playerId: 'two' }));
-  game = cmd(game, { type: 'choose', id: 'pick', songId: 'c', playerId: 'one' });
-  assert.equal(game.status, 'selected');
-  assert.equal(game.songs[game.songIndex].id, 'c');
-  assert.equal(publicGame(game).round, 2);
-  assert.equal(publicGame(game).song.title, undefined);
-  assert.throws(() => cmd(game, { type: 'choose', id: 'played', songId: 'a' }));
-  game = cmd(game, { type: 'start', id: 'start2' });
-  assert.equal(game.status, 'playing');
-});
-test('host can select a first song, skip and select a different one', () => {
-  let game = createGame('room', songs);
-  game = cmd(game, { type: 'choose', id: 'preselect', songId: 'c' });
-  game = cmd(game, { type: 'join', id: 'j', playerId: 'one', name: 'Anna' });
-  game = cmd(game, { type: 'start', id: 's' });
-  game = cmd(game, { type: 'skip', id: 'skip' });
-  assert.equal(game.chooserId, null);
-  game = cmd(game, { type: 'choose', id: 'another', songId: 'a' });
-  assert.equal(game.songIndex, 0);
-  assert.equal(game.playedSongIds?.length, 1);
-});
-test('hints reveal only by host command and reduce available award', () => {
-  let game = playing();
-  assert.equal(JSON.stringify(publicGame(game)).includes('A joke'), false);
-  game = cmd(game, { type: 'hint', id: 'hint' });
-  assert.equal(roundPoints(game), 35);
-  assert.deepEqual(publicGame(game).revealedHints, ['A joke about waiting']);
-  game = cmd(game, { type: 'hint', id: 'hint2' });
-  assert.equal(roundPoints(game), 25);
-  game = cmd(game, { type: 'buzz', id: 'b', songId: 'a', playerId: 'one' });
-  game = cmd(game, { type: 'judge', id: 'j', correct: true });
-  assert.equal(game.players[0].score, 25);
-  assert.equal(cmd(game, { type: 'judge', id: 'j', correct: true }), game);
-});
-test('finish records stable results and supports older games without new fields', () => {
-  let game = playing();
-  for (const id of ['a','b','c']) {
-    if (game.status === 'revealed') {
-      game = cmd(game, { type: 'choose', id: 'choose-'+id, songId: id });
-      game = cmd(game, { type: 'start', id: 'start-'+id });
-      game = cmd(game, { type: 'playback', id: 'playback-'+id, songId: id, active: true });
-    }
-    game = cmd(game, { type: 'buzz', id: 'buzz-'+id, songId: id, playerId: 'one' });
-    game = cmd(game, { type: 'judge', id: 'judge-'+id, correct: true });
-  }
-  assert.equal(game.status, 'finished');
-  assert.equal(game.scoreEvents.length, 3);
-  assert.ok(game.endedAt);
-  assert.equal(game.ownerId, 'owner');
-  assert.equal(game.players[0].score, 100);
-  const legacy = createGame('old', songs);
-  delete legacy.playedSongIds;
-  delete legacy.hintLevel;
-  assert.equal(publicGame(legacy).board.length, 3);
-});
-test('invalid hint, duplicate names and repeat commands are rejected safely', () => {
-  let game = playing();
-  assert.throws(() => cmd(game,{type:'join',id:'same',playerId:'three',name:'anna'}), /имя уже занято/);
-  assert.throws(() => cmd(game,{type:'choose',id:'wrong',songId:'b',playerId:'one'}));
-  game = cmd(game,{type:'buzz',id:'buzz-1',playerId:'one',songId:'a'});
-  assert.equal(cmd(game,{type:'buzz',id:'buzz-1',playerId:'one',songId:'a'}),game);
-  game = cmd(game,{type:'judge',id:'bad',correct:false});
-  assert.equal(game.blockedPlayerIds[0],'one');
-  assert.throws(() => cmd(game,{type:'buzz',id:'again',playerId:'one',songId:'a'}));
+function auction() {
+  const g = exec(room(), { type: 'choose', id: 'pick', songId: 'a' });
+  assert.equal(g.status, 'bidding');
+  return g;
+}
+function prepared() {
+  let g = auction();
+  g = exec(g, { type: 'bid', id: 'first', songId: 'a', playerId: 'one', points: 50, seconds: 20 });
+  g = exec(g, { type: 'closeBidding', id: 'close' });
+  assert.equal(g.status, 'selected');
+  g = exec(g, { type: 'start', id: 'start' });
+  return exec(g, { type: 'playback', id: 'playing', songId: 'a', active: true });
+}
+
+test('new rooms require a selected song and closed auction to start', () => {
+  let g = room();
+  assert.throws(() => exec(g, { type: 'start', id: 'early' }), /выберите песню/);
+  g = exec(g, { type: 'choose', id: 'pick', songId: 'a' });
+  assert.equal(publicGame(g).introHint, 'Вас ждёт весёлая загадка');
+  assert.equal(JSON.stringify(publicGame(g)).includes('Secret song'), false);
+  assert.equal(JSON.stringify(publicGame(g)).includes('Hidden artist'), false);
+  assert.equal(JSON.stringify(publicGame(g)).includes('abcdefghijk'), false);
+  assert.throws(() => exec(g, { type: 'closeBidding', id: 'empty' }), /ставка/);
 });
 
-test('STOP is rejected before playback, while paused, and after the track ends', () => {
-  let game = createGame('room', songs);
-  game = cmd(game, { type: 'join', id: 'join', playerId: 'one', name: 'Anna' });
-  assert.throws(() => cmd(game, { type: 'buzz', id: 'early', playerId: 'one', songId: 'a' }));
-  game = cmd(game, { type: 'start', id: 'start' });
-  assert.equal(publicGame(game).playbackActive, false);
-  assert.throws(() => cmd(game, { type: 'buzz', id: 'no-sound', playerId: 'one', songId: 'a' }));
-  game = cmd(game, { type: 'playback', id: 'playing', songId: 'a', active: true });
-  assert.equal(publicGame(game).playbackActive, true);
-  game = cmd(game, { type: 'playback', id: 'pause', songId: 'a', active: false });
-  assert.equal(publicGame(game).playbackActive, false);
-  assert.throws(() => cmd(game, { type: 'buzz', id: 'on-pause', playerId: 'one', songId: 'a' }));
-  game = cmd(game, { type: 'playback', id: 'resume-audio', songId: 'a', active: true });
-  game = cmd(game, { type: 'buzz', id: 'valid', playerId: 'one', songId: 'a' });
-  assert.equal(game.status, 'buzzed');
-  assert.equal(game.playbackActive, false);
-  assert.throws(() => cmd(game, { type: 'playback', id: 'late-on', songId: 'a', active: true }));
-  game = cmd(game, { type: 'judge', id: 'incorrect', correct: false });
-  assert.equal(game.playbackActive, false);
-  assert.throws(() => cmd(game, { type: 'buzz', id: 'still-paused', playerId: 'two', songId: 'a' }));
+test('first bid accepts arbitrary integer seconds >=2 and points >=nominal', () => {
+  validateBid(50, 2, 50);
+  validateBid(50, 123456, 50);
+  assert.throws(() => validateBid(50, 1, 50), /от 2/);
+  assert.throws(() => validateBid(49, 3, 50), /от 50/);
+  assert.throws(() => validateBid(50, 2.5, 50), /целое/);
+  assert.throws(() => validateBid(100001, 10, 50), /100000/);
 });
 
-test('stale YouTube events cannot activate a new song', () => {
-  let game = playing();
-  game = cmd(game, { type: 'skip', id: 'skip-first' });
-  game = cmd(game, { type: 'choose', id: 'pick-second', songId: 'b' });
-  game = cmd(game, { type: 'start', id: 'start-second' });
-  assert.throws(() => cmd(game, { type: 'playback', id: 'old-song', songId: 'a', active: true }));
-  assert.equal(game.playbackActive, false);
-  game = cmd(game, { type: 'playback', id: 'second-sound', songId: 'b', active: true });
-  assert.equal(game.playbackActive, true);
+test('outbidding improves one or both dimensions and never worsens another', () => {
+  let g = auction();
+  g = exec(g, { type: 'bid', id: 'b1', songId: 'a', playerId: 'one', points: 50, seconds: 20 });
+  g = exec(g, { type: 'bid', id: 'b2', songId: 'a', playerId: 'two', points: 60, seconds: 20 });
+  assert.throws(() => exec(g, { type: 'bid', id: 'bad1', songId: 'a', playerId: 'one', points: 70, seconds: 21 }));
+  assert.throws(() => exec(g, { type: 'bid', id: 'bad2', songId: 'a', playerId: 'one', points: 60, seconds: 20 }));
+  assert.throws(() => exec(g, { type: 'bid', id: 'bad3', songId: 'a', playerId: 'one', points: 59, seconds: 19 }));
+  g = exec(g, { type: 'bid', id: 'b3', songId: 'a', playerId: 'one', points: 60, seconds: 18 });
+  assert.equal(g.currentBid?.playerId, 'one');
+  assert.equal(g.currentBid?.seconds, 18);
+  assert.equal(g.bidHistory?.length, 3);
+  assert.equal(exec(g, { type: 'bid', id: 'b3', songId: 'a', playerId: 'one', points: 60, seconds: 18 }), g);
 });
 
-test('heartbeat lease expires on host disconnect and is renewed on PLAYING', () => {
-  let game = playing();
-  game.playbackConfirmedAt = new Date(Date.now() - 13000).toISOString();
-  assert.equal(publicGame(game).playbackActive, false);
-  assert.throws(() => cmd(game, { type: 'buzz', id: 'stale-buzz', songId: 'a', playerId: 'one' }));
-  game = cmd(game, { type: 'playback', id: 'heartbeat', songId: 'a', active: true });
-  assert.equal(publicGame(game).playbackActive, true);
-  game = cmd(game, { type: 'buzz', id: 'after-heartbeat', songId: 'a', playerId: 'one' });
-  assert.equal(game.status, 'buzzed');
-  assert.equal(publicGame(game).playbackActive, false);
+test('only winning bidder can buzz, the server does not trust player IDs', () => {
+  let g = prepared();
+  assert.throws(() => exec(g, { type: 'buzz', id: 'not-winner', playerId: 'two', songId: 'a' }), /недоступно/);
+  g = exec(g, { type: 'buzz', id: 'winner', playerId: 'one', songId: 'a' });
+  assert.equal(g.status, 'buzzed');
+  assert.throws(() => exec(g, { type: 'judge', id: 'change', correct: true, playerId: 'two' }), /победителя/);
+  g = exec(g, { type: 'judge', id: 'correct', correct: true });
+  assert.equal(g.players.find(x=>x.id==='one')?.score, 350);
+  assert.equal(g.chooserId, 'one');
+  assert.deepEqual(g.playedSongIds,['a']);
+  assert.equal(g.status, 'revealed');
+});
+
+test('wrong answer and expired listening time lose bid and finish the round', () => {
+  let g = prepared();
+  g = exec(g, { type: 'buzz', id: 'answer', playerId: 'one', songId: 'a' });
+  g = exec(g, { type: 'judge', id: 'wrong', correct: false });
+  assert.equal(g.players[0].score, 250);
+  assert.equal(g.status, 'revealed');
+  assert.equal(g.chooserId, null);
+  assert.equal(g.scoreEvents.at(-1)?.reason, 'Аукцион: неправильный ответ');
+  let timeout = prepared();
+  timeout = exec(timeout,{type:'expire',id:'timeout',songId:'a'});
+  assert.equal(timeout.players[0].score,250);
+  assert.equal(timeout.scoreEvents.at(-1)?.reason,'Аукцион: время истекло');
+  assert.equal(timeout.status,'revealed');
+  assert.throws(()=>exec(timeout,{type:'expire',id:'again',songId:'a'}));
+});
+
+test('host pause and reconnect do not reset listening time', () => {
+  let g = prepared();
+  g.playbackSegmentStartedAt = new Date(Date.now() - 3000).toISOString();
+  g.playbackConfirmedAt = new Date().toISOString();
+  assert.ok(playbackUsedMs(g) >= 2900);
+  g = exec(g,{type:'playback',id:'pause',songId:'a',active:false});
+  const used = g.playbackElapsedMs ?? 0;
+  assert.ok(used >= 2900);
+  g = exec(g,{type:'playback',id:'replay',songId:'a',active:true});
+  assert.ok(playbackUsedMs(g) >= used);
+  g = exec(g,{type:'playback',id:'heartbeat',songId:'a',active:true});
+  assert.ok(playbackUsedMs(g) >= used);
+  g.playbackConfirmedAt = new Date(Date.now() - 13000).toISOString();
+  assert.equal(hasActivePlayback(g),false);
+});
+
+test('cannot reactivate STOP after time has elapsed or on another song', () => {
+  const g = prepared();
+  g.playbackElapsedMs = 20_000;
+  g.playbackActive = false;
+  assert.throws(()=>exec(g,{type:'buzz',id:'late',playerId:'one',songId:'a'}));
+  assert.throws(()=>exec(g,{type:'playback',id:'old',active:true,songId:'b'}));
+});
+
+test('remaining songs return to bidding and preserve past bids and results', () => {
+  let g = prepared();
+  g = exec(g,{type:'buzz',id:'b',playerId:'one',songId:'a'});
+  g = exec(g,{type:'judge',id:'j',correct:true});
+  g = exec(g,{type:'choose',id:'next-song',songId:'b',playerId:'one'});
+  assert.equal(g.status,'bidding');
+  assert.equal(g.currentBid,null);
+  assert.equal(g.bidHistory?.length,1);
+  assert.equal(publicGame(g).introHint,'Другая история');
+  assert.equal(publicGame(g).board.find(x=>x.id==='a')?.played,true);
+});
+
+test('legacy stored rooms continue with old start and STOP semantics', () => {
+  let g = room();
+  delete g.auctionEnabled;
+  // Simulate a room saved before starting credits were introduced.
+  g.players.forEach(p => { p.score = 0; });
+  g = exec(g,{type:'start',id:'legacy-start'});
+  g = exec(g,{type:'playback',id:'legacy-playing',songId:'a',active:true});
+  g = exec(g,{type:'buzz',id:'legacy-buzz',playerId:'two',songId:'a'});
+  g = exec(g,{type:'judge',id:'legacy-judge',correct:true});
+  assert.equal(g.players[1].score,50);
+  assert.equal(g.chooserId,'two');
+});
+
+test('finished auction records both stake and score results', () => {
+  let g = createGame('room',[songs[0]],'owner');
+  g = exec(g,{type:'join',id:'join',playerId:'one',name:'Anna'});
+  g = exec(g,{type:'choose',id:'pick',songId:'a'});
+  g = exec(g,{type:'bid',id:'bid',songId:'a',playerId:'one',points:60,seconds:2});
+  g = exec(g,{type:'closeBidding',id:'close'});
+  g = exec(g,{type:'start',id:'start'});
+  g = exec(g,{type:'playback',id:'play',songId:'a',active:true});
+  g = exec(g,{type:'expire',id:'expire',songId:'a'});
+  assert.equal(g.status,'finished');
+  assert.equal(g.players[0].score,240);
+  assert.equal(g.bidHistory?.length,1);
+  assert.ok(g.endedAt);
+});
+
+test('every participant receives 300 initial points by default and custom balance is preserved', () => {
+  const newRoom = room();
+  assert.equal(newRoom.startingPoints, 300);
+  assert.deepEqual(newRoom.players.map(p => p.score), [300, 300]);
+  let custom = createGame('custom', songs, undefined, 450);
+  custom = exec(custom, { type: 'join', id: 'join-custom', playerId: 'new', name: 'New' });
+  assert.equal(custom.players[0].score, 450);
+  assert.equal(publicGame(custom).startingPoints, 450);
+  assert.throws(() => createGame('bad', songs, undefined, 0), /от 1/);
+  assert.throws(() => createGame('bad', songs, undefined, 1.5), /от 1/);
+});
+
+test('auction forbids wagering more than current balance or with zero points', () => {
+  let game = auction();
+  assert.throws(() => exec(game, { type: 'bid', id: 'too-high', songId: 'a',
+    playerId: 'one', points: 301, seconds: 3 }), /Недостаточно очков/);
+  game = exec(game, { type: 'adjust', id: 'reduce', playerId: 'one',
+    delta: -300, reason: 'Test spend' });
+  assert.throws(() => exec(game, { type: 'bid', id: 'empty', songId: 'a',
+    playerId: 'one', points: 50, seconds: 3 }), /нужны очки/);
+  assert.throws(() => exec(game, { type: 'bid', id: 'nominal', songId: 'a',
+    playerId: 'two', points: 301, seconds: 3 }), /Недостаточно/);
+  game = exec(game, { type: 'bid', id: 'full', songId: 'a',
+    playerId: 'two', points: 300, seconds: 3 });
+  assert.equal(game.currentBid?.points, 300);
+  assert.throws(() => exec(game, { type: 'adjust', id: 'reduce-active', playerId: 'two',
+    delta: -1, reason: 'Manual change' }), /ниже уже принятой ставки/);
+});
+
+test('losing an all-in wager leaves no bidding power in the following round', () => {
+  let g = auction();
+  g = exec(g,{type:'bid',id:'all-in',songId:'a',playerId:'one',points:300,seconds:2});
+  g = exec(g,{type:'closeBidding',id:'close-all'});
+  g = exec(g,{type:'start',id:'start-all'});
+  g = exec(g,{type:'playback',id:'playing-all',songId:'a',active:true});
+  g = exec(g,{type:'expire',id:'miss-all',songId:'a'});
+  assert.equal(g.players[0].score,0);
+  g = exec(g,{type:'choose',id:'next',songId:'b'});
+  assert.throws(()=>exec(g,{type:'bid',id:'broke',songId:'b',playerId:'one',points:30,seconds:2}),/нужны очки/);
+});
+
+test('server serializes STOP versus expired wager to award or penalize only once', () => {
+  let answer = prepared();
+  answer = exec(answer,{type:'buzz',id:'buzz-first',songId:'a',playerId:'one'});
+  assert.throws(()=>exec(answer,{type:'expire',id:'late-expire',songId:'a'}));
+  answer = exec(answer,{type:'judge',id:'right',correct:true});
+  assert.equal(answer.scoreEvents.length,1);
+  let timedOut = prepared();
+  timedOut = exec(timedOut,{type:'expire',id:'expire-first',songId:'a'});
+  assert.throws(()=>exec(timedOut,{type:'buzz',id:'late-buzz',songId:'a',playerId:'one'}));
+  assert.equal(timedOut.scoreEvents.length,1);
 });

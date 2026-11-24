@@ -6,7 +6,7 @@ import { getAuth } from '@/lib/auth';
 import { songInput } from '@/lib/song-input';
 
 const requestSchema = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('create'), songs: z.array(songInput).min(1).max(100) }),
+  z.object({ action: z.literal('create'), songs: z.array(songInput).min(1).max(100), startingPoints: z.number().int().min(1).max(100000).default(300) }),
   z.object({ action: z.literal('join'), room: z.string().length(6), name: z.string().trim().min(1).max(40) }),
   z.object({ action: z.literal('command'), room: z.string().length(6), command: z.discriminatedUnion('type', [
     z.object({ type: z.literal('start'), id: z.string().uuid() }),
@@ -16,6 +16,10 @@ const requestSchema = z.discriminatedUnion('action', [
     z.object({ type: z.literal('adjust'), id: z.string().uuid(), playerId: z.string(), delta: z.number().int(), reason: z.string() }),
     z.object({ type: z.literal('choose'), id: z.string().uuid(), songId: z.string().uuid() }),
     z.object({ type: z.literal('playback'), id: z.string().uuid(), songId: z.string().uuid(), active: z.boolean() }),
+    z.object({ type: z.literal('bid'), id: z.string().uuid(), songId: z.string().uuid(),
+      points: z.number().int().min(0).max(100000), seconds: z.number().int().min(2) }),
+    z.object({ type: z.literal('closeBidding'), id: z.string().uuid() }),
+    z.object({ type: z.literal('expire'), id: z.string().uuid(), songId: z.string().uuid() }),
     z.object({ type: z.literal('hint'), id: z.string().uuid() }),
     z.object({ type: z.literal('skip'), id: z.string().uuid() }),
     z.object({ type: z.literal('next'), id: z.string().uuid() }),
@@ -46,7 +50,7 @@ export async function POST(req: Request) {
       if (!session) return reply({ error: 'Чтобы создать комнату, войдите через Google в разделе «Мои игры».' }, 401);
       const room = randomBytes(4).toString('hex').slice(0, 6).toUpperCase();
       const hostToken = secret();
-      const game = createGame(room, body.songs.map(s => ({ ...s, id: randomUUID() })), session.user.id);
+      const game = createGame(room, body.songs.map(s => ({ ...s, id: randomUUID() })), session.user.id, body.startingPoints);
       await db.query('INSERT INTO rooms (id, host_token, state) VALUES ($1,$2,$3)', [room, hostToken, JSON.stringify(game)]);
       return reply({ room, token: hostToken }, 201);
     }
@@ -61,7 +65,7 @@ export async function POST(req: Request) {
         return reply({ room: body.room, token: playerToken, playerId });
       }
       let command: Command;
-      if (body.command.type === 'buzz' || body.command.type === 'choose') {
+      if (body.command.type === 'buzz' || body.command.type === 'choose' || body.command.type === 'bid') {
         const isHost = token(req) && token(req) === row.host_token;
         if (body.command.type === 'choose' && isHost) {
           command = body.command;
