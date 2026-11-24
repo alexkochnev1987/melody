@@ -245,7 +245,8 @@ export default function Home() {
         : <div className="game-grid"><section className="panel main-panel"><div className="game-top"><div><span className="eyebrow">КОМНАТА {session.room}</span><h1>{session.role === 'host' ? 'Пульт ведущего' : session.role === 'display' ? 'Играем!' : `Привет, ${state.players.find(p => p.id === session.playerId)?.name ?? 'игрок'}!`}</h1></div><span className={connected ? 'connection' : 'connection offline'}>{connected ? '● На связи' : '● Нет связи'}</span></div><p className="muted">Раунд {state.round} из {state.totalRounds} · {state.song.availablePoints ?? state.song.points} баллов</p>
         {session.role === 'host' && state.hostSong?.youtubeId &&
           (!state.auctionEnabled || ['selected','playing','buzzed','openAnswer','secondBuzzed','revealed','finished'].includes(state.status)) && <><div className="host-song"><strong>{state.hostSong.title}</strong><span>{state.hostSong.artist} · {state.hostSong.points} баллов · начало {state.hostSong.startSeconds ?? 0} сек.</span></div><HostPlayer ref={player} key={`${state.hostSong.id}:${state.auctionEnabled && ['openAnswer','secondBuzzed','revealed','finished'].includes(state.status) ? 'unlimited' : 'limited'}`} videoId={state.hostSong.youtubeId}
-          startSeconds={state.hostSong.startSeconds ?? 0}
+          startSeconds={state.auctionEnabled && ['revealed','finished'].includes(state.status)
+            ? 0 : (state.hostSong.startSeconds ?? 0)}
           listenSeconds={state.auctionEnabled && !['openAnswer','secondBuzzed','revealed','finished'].includes(state.status)
             ? state.currentBid?.seconds : undefined}
           initialRemainingSeconds={state.auctionEnabled && !['openAnswer','secondBuzzed','revealed','finished'].includes(state.status)
