@@ -4,12 +4,13 @@ export type HintUpdate = {
   artist: string;
   youtubeId: string;
   hints: string[];
+  introHint?: string;
 };
 
 /** Returns a new songs array with ONLY the specified hints changed.
  * Optimistic identity check prevents applying a stale index after a song reorder.
  */
-export function replaceSongHints<T extends { title: string; artist: string; youtubeId: string; hints?: string[] }>(
+export function replaceSongHints<T extends { title: string; artist: string; youtubeId: string; hints?: string[]; introHint?: string }>(
   songs: T[],
   updates: HintUpdate[],
 ): T[] {
@@ -25,7 +26,8 @@ export function replaceSongHints<T extends { title: string; artist: string; yout
       current.youtubeId !== update.youtubeId) {
       throw new Error('Список песен изменился. Обновите игру перед сохранением подсказок');
     }
-    copy[update.index] = { ...current, hints: [...update.hints] };
+    copy[update.index] = { ...current, hints: [...update.hints],
+      ...(update.introHint !== undefined ? { introHint: update.introHint } : {}) };
   }
   return copy;
 }
