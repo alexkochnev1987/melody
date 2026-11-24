@@ -47,7 +47,7 @@ export function summarizePlayerRooms(rooms: PlayerRoom[], identityHash: string) 
 
     const events = state.scoreEvents.filter(event => event.playerId === player.id);
     const correct = events.filter(event =>
-      /(?:^|:\\s)правильный ответ$/i.test(event.reason)).length;
+      /(?:^|:\s)правильный ответ$/i.test(event.reason)).length;
     const bids = state.bidHistory?.filter(bid => bid.playerId === player.id).length ?? 0;
     const earned = events.reduce((sum, event) => sum + Math.max(0, event.delta), 0);
     const lost = events.reduce((sum, event) => sum + Math.max(0, -event.delta), 0);
