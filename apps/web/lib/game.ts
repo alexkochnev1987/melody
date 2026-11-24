@@ -6,7 +6,7 @@ export type Bid = { playerId: string; points: number; seconds: number; songId: s
 export type Game = {
   id: string;
   revision: number;
-  status: 'lobby' | 'bidding' | 'selected' | 'playing' | 'buzzed' | 'revealed' | 'finished';
+  status: 'lobby' | 'bidding' | 'selected' | 'playing' | 'buzzed' | 'openAnswer' | 'secondBuzzed' | 'revealed' | 'finished';
   songs: Song[];
   songIndex: number;
   players: Player[];
@@ -199,6 +199,9 @@ export function applyCommand(game: Game, command: Command): Game {
         throw new Error('Торги сейчас недоступны');
       }
       const bidder = player(command.playerId);
+      if (next.currentBid?.playerId === command.playerId) {
+        throw new Error('Нельзя перебивать собственную ставку');
+      }
       if (bidder.score <= 0) throw new Error('Для участия в торгах нужны очки');
       validateBid(command.points, command.seconds, song.points, next.currentBid);
       if (command.points > bidder.score) {
@@ -248,8 +251,17 @@ export function applyCommand(game: Game, command: Command): Game {
     }
     case 'buzz':
       player(command.playerId);
-      if (next.status !== 'playing' || !hasActivePlayback(next) || command.songId !== song.id ||
-        next.blockedPlayerIds.includes(command.playerId) ||
+      if (command.songId !== song.id || next.blockedPlayerIds.includes(command.playerId)) {
+        throw new Error('Нажатие недоступно');
+      }
+      if (next.auctionEnabled && next.status === 'openAnswer') {
+        // The wagered clip has already stopped. All players who haven't
+        // answered incorrectly may claim a second-chance answer without audio.
+        next.status = 'secondBuzzed';
+        next.winnerId = command.playerId;
+        break;
+      }
+      if (next.status !== 'playing' || !hasActivePlayback(next) ||
         (next.auctionEnabled && next.currentBid?.playerId !== command.playerId)) {
         throw new Error('Нажатие недоступно');
       }
@@ -258,15 +270,39 @@ export function applyCommand(game: Game, command: Command): Game {
       next.playbackActive = false;
       break;
     case 'judge':
-      if (next.status !== 'buzzed' || !next.winnerId) throw new Error('Нет ответа для оценки');
-      if (next.auctionEnabled) {
+      if (!['buzzed', 'secondBuzzed'].includes(next.status) || !next.winnerId) {
+        throw new Error('Нет ответа для оценки');
+      }
+      if (next.auctionEnabled && next.status === 'secondBuzzed') {
+        if (command.playerId && command.playerId !== next.winnerId) {
+          throw new Error('Оценить можно только ответившего игрока');
+        }
+        if (command.correct) {
+          // Second chances are worth the song's nominal, NOT the wager.
+          award(next.winnerId, song.points, 'Второй шанс: правильный ответ');
+          completeRound(next.winnerId);
+        } else {
+          next.blockedPlayerIds.push(next.winnerId);
+          next.winnerId = null;
+          next.status = 'openAnswer';
+        }
+      } else if (next.auctionEnabled) {
         if (!next.currentBid || next.winnerId !== next.currentBid.playerId ||
           (command.playerId && command.playerId !== next.currentBid.playerId)) {
           throw new Error('Оценить можно только победителя аукциона');
         }
         award(next.currentBid.playerId, command.correct ? roundPoints(next) : -roundPoints(next),
           command.correct ? 'Аукцион: правильный ответ' : 'Аукцион: неправильный ответ');
-        completeRound(command.correct ? next.currentBid.playerId : null);
+        if (command.correct) {
+          completeRound(next.currentBid.playerId);
+        } else {
+          // The losing wager is deducted exactly once. The clip is over:
+          // all other unblocked participants may press STOP without replaying it.
+          next.blockedPlayerIds.push(next.winnerId);
+          next.winnerId = null;
+          next.status = 'openAnswer';
+          next.playbackActive = false;
+        }
       } else if (command.correct) {
         const correctId = command.playerId ?? next.winnerId;
         award(correctId, roundPoints(next), 'Правильный ответ');
@@ -282,7 +318,12 @@ export function applyCommand(game: Game, command: Command): Game {
       if (!next.auctionEnabled || next.status !== 'playing' || command.songId !== song.id ||
         !next.currentBid) throw new Error('Сейчас нельзя завершить прослушивание');
       award(next.currentBid.playerId, -next.currentBid.points, 'Аукцион: время истекло');
-      completeRound(null);
+      next.playbackActive = false;
+      next.playbackConfirmedAt = undefined;
+      next.playbackSegmentStartedAt = undefined;
+      next.playbackElapsedMs = next.currentBid.seconds * 1000;
+      next.winnerId = null;
+      next.status = 'openAnswer';
       break;
     case 'resume':
       if (next.auctionEnabled || next.status !== 'buzzed') throw new Error('Продолжение раунда недоступно');
@@ -306,7 +347,7 @@ export function applyCommand(game: Game, command: Command): Game {
       next.hintLevel++;
       break;
     case 'skip':
-      if (next.status !== 'playing' && next.status !== 'buzzed') throw new Error('Нельзя пропустить этот раунд');
+      if (!['playing', 'buzzed', 'openAnswer', 'secondBuzzed'].includes(next.status)) throw new Error('Нельзя пропустить этот раунд');
       completeRound(null);
       break;
     case 'next': {
