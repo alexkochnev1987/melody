@@ -8,11 +8,12 @@ export type PlayerSnapshot = {
   playbackActive?: boolean;
   chooserId?: string | null;
   auctionEnabled?: boolean;
-  currentBid?: { playerId: string; points: number; seconds: number };
+  currentBid?: { playerId: string; points: number; seconds: number; commandId: string } | null;
+  introHint?: string | null;
   board?: { id: string; category: string; points: number; played: boolean; selected: boolean }[];
   revealedHints?: string[];
   blockedPlayerIds: string[];
-  song: { id: string; points: number; availablePoints?: number; title?: string; artist?: string };
+  song: { id: string; points: number; availablePoints?: number; title?: string; artist?: string; category?: string };
 };
 
 export type PlayerView = {
