@@ -28,3 +28,13 @@ test('stale identities, out-of-range and duplicate indices do not save', () => {
   const u = { index: 0, title: 'A', artist: 'First', youtubeId: 'abcdefghijk', hints: [] };
   assert.throws(() => replaceSongHints(original, [u,u]), /несколько раз/);
 });
+
+test('saving chosen pregame hint affects only the one song', () => {
+  const next = replaceSongHints(original, [{
+    index: 0, title: 'A', artist: 'First', youtubeId: 'abcdefghijk',
+    hints: ['option A', 'option B', 'option C'], introHint: 'option B',
+  }]);
+  assert.equal(next[0].introHint, 'option B');
+  assert.equal(next[0].points, original[0].points);
+  assert.deepEqual(next[1], original[1]);
+});
