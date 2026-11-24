@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 
 type GameHistory = {
   room: string;
@@ -88,7 +89,7 @@ export default function GuestProfile() {
   return <main className="shell profile-page">
     <header>
       <div className="brand"><span className="brand-icon">♫</span> melody<span className="brand-dot">.</span></div>
-      <a className="display-link" href="/">← В игру</a>
+      <Link className="display-link" href="/">← В игру</Link>
     </header>
     <section className="panel profile-intro">
       <span className="eyebrow">ЛИЧНАЯ ИСТОРИЯ</span>
