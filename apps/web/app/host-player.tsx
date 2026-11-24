@@ -4,7 +4,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 
 declare global { interface Window { onYouTubeIframeAPIReady?: () => void } }
 
-export type HostPlayerHandle = { play: () => boolean; pause: () => void };
+export type HostPlayerHandle = { play: () => boolean; pause: () => void; replay: () => boolean };
 type Props = {
   videoId: string;
   startSeconds: number;
@@ -56,7 +56,16 @@ const HostPlayer = forwardRef<HostPlayerHandle, Props>(function HostPlayer({
       return true;
     },
     pause: () => { if (ready.current) player.current?.pauseVideo(); },
-  }), []);
+    replay: () => {
+      if (!ready.current || !player.current) return false;
+      // The full-song second-chance and reveal stages have no end limit.
+      // The initial wagered clip cannot be restarted to avoid extra listening time.
+      if (listenSeconds) return false;
+      player.current.seekTo(startSeconds, true);
+      player.current.playVideo();
+      return true;
+    },
+  }), [listenSeconds, startSeconds]);
 
   useEffect(() => {
     let active = true;
