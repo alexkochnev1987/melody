@@ -9,6 +9,7 @@ export type PlayerSnapshot = {
   chooserId?: string | null;
   auctionEnabled?: boolean;
   currentBid?: { playerId: string; points: number; seconds: number; commandId: string } | null;
+  bidHistory?: { playerId: string; points: number; seconds: number; commandId: string }[];
   introHint?: string | null;
   remainingSeconds?: number | null;
   board?: { id: string; category: string; points: number; played: boolean; selected: boolean }[];
@@ -35,8 +36,11 @@ export function getPlayerView(state: PlayerSnapshot, playerId: string, connected
   const self = ranking.find(player => player.id === playerId);
   const rank = ranking.findIndex(player => player.id === playerId) + 1;
   const blocked = state.blockedPlayerIds.includes(playerId);
-  const canBuzz = connected && !busy && state.status === 'playing' && state.playbackActive === true && !blocked &&
-    (!state.auctionEnabled || state.currentBid?.playerId === playerId);
+  const canBuzz = connected && !busy && !blocked && (
+    (state.status === 'playing' && state.playbackActive === true &&
+      (!state.auctionEnabled || state.currentBid?.playerId === playerId)) ||
+    (state.auctionEnabled === true && state.status === 'openAnswer')
+  );
   const answer = ['revealed', 'finished'].includes(state.status) && state.song.artist && state.song.title
     ? `${state.song.artist} — ${state.song.title}`
     : null;
@@ -54,7 +58,7 @@ export function getPlayerView(state: PlayerSnapshot, playerId: string, connected
     ...base, title: 'Нет соединения', description: 'Проверяем подключение. Кнопка временно недоступна.',
     buttonLabel: 'ОФЛАЙН', buttonHint: 'Ждём подключения',
   };
-  if (busy && state.status === 'playing') return {
+  if (busy && (state.status === 'playing' || state.status === 'openAnswer')) return {
     ...base, title: 'Отправляем сигнал…', description: 'Ждём ответа сервера — первенство ещё не подтверждено.',
     buttonLabel: 'ОТПРАВКА', buttonHint: 'Не нажимай повторно',
   };
@@ -63,9 +67,20 @@ export function getPlayerView(state: PlayerSnapshot, playerId: string, connected
     buttonLabel: 'ЖДЁМ', buttonHint: 'Ожидаем ведущего',
   };
   if (state.status === 'bidding') return {
-    ...base, title: 'Аукцион открыт!', description: 'Перебей ставку баллами или меньшим временем.',
+    ...base,
+    title: state.currentBid?.playerId === playerId ? 'Ты лидируешь!' : 'Аукцион открыт!',
+    description: state.currentBid?.playerId === playerId
+      ? 'Твоя ставка принята. Перебить её может только другой участник.'
+      : 'Перебей ставку баллами или меньшим временем.',
     buttonLabel: 'СТАВКИ', buttonHint: 'Торги идут',
   };
+  if (state.status === 'openAnswer') return blocked
+    ? { ...base, title: 'Твоя попытка завершена',
+        description: 'Фрагмент уже сыграл. Другие участники могут угадать.',
+        buttonLabel: 'УЖЕ ОТВЕТИЛ', buttonHint: 'Жди решения ведущего' }
+    : { ...base, title: 'Второй шанс!',
+        description: 'Музыка закончилась. Знаешь ответ? Нажми STOP!',
+        buttonLabel: 'STOP', buttonHint: 'Угадать после фрагмента' };
   if (state.status === 'playing' && state.auctionEnabled && state.currentBid?.playerId !== playerId) return {
     ...base, title: 'Слушает другой игрок', description: 'Право ответа у победителя торгов.',
     buttonLabel: 'ЖДЁМ', buttonHint: 'Отвечает победитель аукциона',
@@ -82,7 +97,7 @@ export function getPlayerView(state: PlayerSnapshot, playerId: string, connected
     ...base, title: 'Узнал мелодию?', description: 'Жми первым, если знаешь исполнителя и название!',
     buttonLabel: 'STOP', buttonHint: 'Я знаю!',
   };
-  if (state.status === 'buzzed') return state.winnerId === playerId
+  if (state.status === 'buzzed' || state.status === 'secondBuzzed') return state.winnerId === playerId
     ? { ...base, title: 'Ты первый!', description: 'Музыка остановлена. Назови свой ответ ведущему.',
         buttonLabel: 'ТВОЙ ХОД', buttonHint: 'Отвечай вслух' }
     : { ...base, title: 'Отвечает другой игрок', description: 'Жди решения ведущего. Раунд ещё может продолжиться.',
