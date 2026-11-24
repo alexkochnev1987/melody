@@ -39,9 +39,12 @@ type FormProps = Shared & {
 };
 
 export function AuctionBidForm({ bid, nominal, balance, disabled, onBid }: FormProps) {
-  const [points, setPoints] = useState(bid?.points ?? nominal);
-  const [seconds, setSeconds] = useState(bid?.seconds ?? 10);
-  const good = Number.isSafeInteger(points) && points >= nominal && points <= 100000 && points <= balance && balance > 0 &&
+  const [pointsInput, setPointsInput] = useState(String(bid?.points ?? nominal));
+  const [secondsInput, setSecondsInput] = useState(String(bid?.seconds ?? 10));
+  const points = Number(pointsInput);
+  const seconds = Number(secondsInput);
+  const good = pointsInput.trim() !== '' && secondsInput.trim() !== '' &&
+    Number.isSafeInteger(points) && points >= nominal && points <= 100000 && points <= balance && balance > 0 &&
     Number.isSafeInteger(seconds) && seconds >= 2 &&
     (!bid || (points >= bid.points && seconds <= bid.seconds &&
       (points > bid.points || seconds < bid.seconds)));
@@ -56,20 +59,21 @@ export function AuctionBidForm({ bid, nominal, balance, disabled, onBid }: FormP
     <div className="auction-bid-form__fields">
       <label>Очки
         <input type="number" inputMode="numeric" min={nominal} max={100000} step="1"
-          value={points} onChange={e => setPoints(Number(e.target.value))} aria-label="Очки ставки" />
+          value={points} onChange={e => setPointsInput(e.target.value)} aria-label="Очки ставки" />
       </label>
       <label>Секунды
         <input type="number" inputMode="numeric" min="2" step="1"
-          value={seconds} onChange={e => setSeconds(Number(e.target.value))} aria-label="Время ставки в секундах" />
+          value={seconds} onChange={e => setSecondsInput(e.target.value)} aria-label="Время ставки в секундах" />
       </label>
     </div>
     <div className="auction-bid-form__quick">
       <button type="button" className="secondary" disabled={disabled || points > balance - 10 || points > 99990}
-        onClick={() => setPoints(Math.min(balance, 100000, Math.max(points, bid?.points ?? nominal) + 10))}>+10 очков</button>
+        onClick={() => setPointsInput(String(Math.min(balance, 100000, Math.max(points, bid?.points ?? nominal) + 10)))}>+10 очков</button>
       <button type="button" className="secondary" disabled={disabled || seconds <= 2}
-        onClick={() => setSeconds(Math.max(2, Math.min(seconds, bid?.seconds ?? seconds) - 1))}>−1 секунда</button>
+        onClick={() => setSecondsInput(String(Math.max(2, Math.min(seconds, bid?.seconds ?? seconds) - 1)))}>−1 секунда</button>
     </div>
     {reason && <p className="auction-bid-form__error" role="status">{reason}</p>}
+    <p className="auction-bid-form__rules">Угадал: +{Number.isSafeInteger(points) ? points : '—'} · Ошибка или время вышло: −{Number.isSafeInteger(points) ? points : '—'}</p>
     <button type="button" disabled={disabled || !good} onClick={() => onBid(points,seconds)}>
       {bid ? 'Перебить ставку' : 'Сделать ставку'}
     </button>

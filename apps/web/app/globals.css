@@ -208,3 +208,18 @@ header { height:88px; display:flex; align-items:center; gap:18px; border-bottom:
   .player-screen--auction .player-screen__center h1 { font-size: 20px; }
   .player-screen--auction .auction-summary__hint { padding: 7px 10px; }
 }
+
+/* Keep the bid action in the thumb zone and scroll only the clue/leader on compact phones. */
+.player-screen__bid-action { flex: 0 0 auto; width: 100%; }
+.player-screen__bid-action .auction-bid-form { gap: 7px; }
+.player-screen__bid-action .auction-bid-form input { margin-top: 4px; min-height: 44px; }
+.player-screen__bid-action .auction-bid-form button { min-height: 44px; }
+.auction-bid-form__balance, .auction-bid-form__rules { margin: 0; color: #b9bacb; font-size: 12px; line-height: 1.35; }
+.auction-bid-form__balance strong { color: #c7f763; }
+@media(max-height:650px) {
+  .player-screen--auction .player-screen__center h1 { font-size: 19px; }
+  .player-screen--auction .player-screen__center > p { display: none; }
+  .player-screen__bid-action .auction-bid-form { gap: 5px; }
+  .player-screen__bid-action .auction-bid-form__fields input { min-height: 39px; padding: 7px; font-size: 19px; }
+  .player-screen__bid-action .auction-bid-form button { min-height: 40px; padding: 8px; }
+}
