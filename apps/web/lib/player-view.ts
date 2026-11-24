@@ -87,7 +87,7 @@ export function getPlayerView(state: PlayerSnapshot, playerId: string, connected
     : { ...base, title: 'Отвечает другой игрок', description: 'Жди решения ведущего. Раунд ещё может продолжиться.',
         buttonLabel: 'ЖДЁМ', buttonHint: 'Сейчас не твой ход' };
   if (state.status === 'selected') return {
-    ...base, title: 'Ставка принята!', description: 'Ведущий готовит музыку. Время и очки зафиксированы.',
+    ...base, title: 'Торги завершены!', description: 'Ведущий готовит музыку. Время и очки победителя зафиксированы.',
     buttonLabel: 'СКОРО', buttonHint: 'Ожидаем ведущего',
   };
   if (state.status === 'revealed' && state.chooserId === playerId) return {
