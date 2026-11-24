@@ -1,10 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import type { Bid, Player } from '@/lib/game';
+import type { Player } from '@/lib/game';
+type PublicBid = { playerId: string; points: number; seconds: number; commandId: string };
 
 type Shared = {
-  bid?: Bid | null;
+  bid?: PublicBid | null;
   players: Player[];
   category: string;
   nominal: number;
