@@ -10,6 +10,8 @@ export type Game = {
   songs: Song[];
   songIndex: number;
   players: Player[];
+  /** Private guest fingerprint → playerId. Must never be included in publicGame(). */
+  identityHashes?: Record<string, string>;
   winnerId: string | null;
   blockedPlayerIds: string[];
   scoreEvents: ScoreEvent[];
@@ -37,7 +39,7 @@ export type Game = {
 };
 
 export type Command =
-  | { type: 'join'; id: string; playerId: string; name: string }
+  | { type: 'join'; id: string; playerId: string; name: string; identityHash?: string }
   | { type: 'start'; id: string }
   | { type: 'buzz'; id: string; playerId: string; songId: string }
   | { type: 'judge'; id: string; correct: boolean; playerId?: string }
@@ -180,6 +182,14 @@ export function applyCommand(game: Game, command: Command): Game {
       if (next.status === 'finished' || !command.playerId || !name || name.length > 40 ||
         next.players.some(p => p.id === command.playerId)) throw new Error('Невозможно добавить игрока');
       if (next.players.some(p => p.name.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('ru') === name.toLocaleLowerCase('ru'))) throw new Error('Это имя уже занято в комнате. Выберите другое.');
+      if (command.identityHash) {
+        if (!/^[a-f0-9]{64}$/.test(command.identityHash)) throw new Error('Неверный профиль гостя');
+        next.identityHashes ??= {};
+        if (next.identityHashes[command.identityHash]) {
+          throw new Error('Ты уже участвуешь в этой комнате');
+        }
+        next.identityHashes[command.identityHash] = command.playerId;
+      }
       next.players.push({ id: command.playerId, name, score: next.auctionEnabled ? next.startingPoints ?? DEFAULT_STARTING_POINTS : 0 });
       break;
     }
