@@ -46,7 +46,7 @@ test('song answer is hidden until the round has been revealed', () => {
 
 test('auction: only the winning bidder sees enabled STOP', () => {
   const auctionState = { status: 'playing', auctionEnabled: true,
-    currentBid: { playerId: 'two', points: 60, seconds: 5 } };
+    currentBid: { playerId: 'two', points: 60, seconds: 5, commandId: 'bid-1' } };
   assert.equal(view(auctionState).canBuzz, false);
   assert.equal(view(auctionState).title, 'Слушает другой игрок');
   assert.equal(getPlayerView({ ...base, ...auctionState }, 'two', true, false).canBuzz, true);
