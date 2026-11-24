@@ -276,3 +276,74 @@ header { height:88px; display:flex; align-items:center; gap:18px; border-bottom:
   .hint-tone-option { min-height: 86px; padding: 9px; }
   .hint-tone-option strong { font-size: 12px; }
 }
+
+
+/* A single answer-reveal card is shared by TV, host and mobile players. */
+.round-result {
+  display: grid;
+  gap: 8px;
+  padding: clamp(18px, 3vw, 32px);
+  margin: 12px 0;
+  border-radius: 18px;
+  border: 1px solid #88b766;
+  background: #263527;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.round-result__eyebrow {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1.4px;
+  color: #c7f763;
+}
+.round-result h2 {
+  margin: 0;
+  font-size: clamp(26px, 5vw, 46px);
+  line-height: 1.15;
+  color: #f9fbed;
+}
+.round-result__artist {
+  margin: 0;
+  color: #d2e7c5;
+  font-size: clamp(17px, 3.5vw, 25px);
+}
+.round-result__winner {
+  padding: 10px 12px;
+  margin: 8px 0 0;
+  border-radius: 10px;
+  background: #3b5535;
+  font-weight: 800;
+  color: #d8ffac;
+  font-variant-numeric: tabular-nums;
+}
+.round-result__no-winner { margin: 6px 0 0; color: #c1c9b8; font-size: 14px; }
+.player-screen .round-result {
+  margin: 4px 0;
+  padding: 14px;
+  width: 100%;
+  gap: 6px;
+}
+.player-screen .round-result h2 { font-size: clamp(23px, 6vw, 32px); }
+.player-screen .round-result__artist { font-size: 17px; }
+.host-controls-note { margin: 4px 0; color: #b9b9cb; font-size: 14px; line-height: 1.4; }
+.player-screen__bid-confirmation {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  padding: 14px;
+  border-radius: 14px;
+  background: #2f412f;
+  border: 1px solid #a1c87a;
+  text-align: center;
+}
+.player-screen__bid-confirmation strong { color: #c7f763; font-size: 17px; }
+.player-screen__bid-confirmation span { color: #f7fff1; font-size: 19px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.player-screen__bid-confirmation small { color: #c1d8bf; font-size: 12px; line-height: 1.4; }
+.player-screen__bid-previous {
+  border-radius: 10px;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  background: #3c3349;
+  color: #e5dbf7;
+  font-size: 12px;
+}
