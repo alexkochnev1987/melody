@@ -17,7 +17,14 @@ type Props = {
 
 export default function PlayerScreen({ state, playerId, room, connected, busy, onBuzz, onChoose, onBid }: Props) {
   const view = getPlayerView(state, playerId, connected, busy);
-  const choosing = state.status === 'revealed' && state.chooserId === playerId;
+  const choosing = state.status === 'revealed' && state.chooserId === playerId &&
+    state.choiceOpen !== false;
+  const ownLeadingBid = state.status === 'bidding' && state.currentBid?.playerId === playerId;
+  const previousBid = state.status === 'bidding'
+    ? [...(state.bidHistory ?? [])].reverse().find(bid => bid.playerId === playerId)
+    : null;
+  const canShowStop = !state.auctionEnabled ||
+    ['openAnswer', 'secondBuzzed'].includes(state.status);
   const bidding = state.auctionEnabled === true && state.status === 'bidding';
   const preparing = state.auctionEnabled === true && state.status === 'selected';
   const onStop = () => {
@@ -60,7 +67,15 @@ export default function PlayerScreen({ state, playerId, room, connected, busy, o
             <strong>{state.players.find(p => p.id === state.currentBid?.playerId)?.name ?? 'Игрок'} · {state.currentBid.points} очков / {state.currentBid.seconds} с</strong>
             {state.status === 'playing' && <span>Осталось ~{Math.max(0, Math.ceil(state.remainingSeconds ?? state.currentBid.seconds))} с</span>}
           </div>}
-        {view.answer && <div className="player-screen__answer"><span>ПРАВИЛЬНЫЙ ОТВЕТ</span><strong>{view.answer}</strong></div>}
+        {view.answer && <div className="player-screen__answer player-screen__answer--revealed" role="status">
+          <span>ПРАВИЛЬНЫЙ ОТВЕТ</span>
+          <strong>{state.song.title}</strong>
+          <span className="player-screen__answer-artist">{state.song.artist}</span>
+          {state.roundResult && <span className="player-screen__answer-award">
+            ✓ {state.players.find(p => p.id === state.roundResult?.playerId)?.name ?? 'Игрок'}
+            {' '}+{state.roundResult.points} очков
+          </span>}
+        </div>}
         {(bidding || preparing) && <div className="player-screen__auction">
           <AuctionSummary bid={state.currentBid} players={state.players}
             category={state.song.category ?? 'Разное'} nominal={state.song.points} introHint={state.introHint} />
@@ -76,13 +91,22 @@ export default function PlayerScreen({ state, playerId, room, connected, busy, o
       </div>
 
       {bidding && <div className="player-screen__bid-action">
-        <AuctionBidForm key={state.currentBid?.commandId ?? 'first'}
-          bid={state.currentBid} players={state.players} category={state.song.category ?? 'Разное'}
-          nominal={state.song.points} balance={state.players.find(p => p.id === playerId)?.score ?? 0}
-          disabled={!connected || busy} onBid={onBid} />
+        {ownLeadingBid ? <div className="player-screen__bid-confirmation" role="status">
+          <strong>✓ Твоя ставка принята</strong>
+          <span>{state.currentBid?.points} очков · {state.currentBid?.seconds} секунд</span>
+          <small>Теперь тебя может перебить только другой участник.</small>
+        </div> : <>
+          {previousBid && <div className="player-screen__bid-previous" role="status">
+            Твою ставку {previousBid.points} очков / {previousBid.seconds} секунд перебили.
+          </div>}
+          <AuctionBidForm key={state.currentBid?.commandId ?? 'first'}
+            bid={state.currentBid} players={state.players} category={state.song.category ?? 'Разное'}
+            nominal={state.song.points} balance={state.players.find(p => p.id === playerId)?.score ?? 0}
+            disabled={!connected || busy} onBid={onBid} />
+        </>}
       </div>}
 
-      {!choosing && !bidding && !preparing && <div className="player-screen__action">
+      {!choosing && !bidding && !preparing && canShowStop && <div className="player-screen__action">
         <button
           type="button"
           className={`player-screen__stop${view.canBuzz ? ' player-screen__stop--active' : ''}`}
