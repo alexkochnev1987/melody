@@ -59,11 +59,11 @@ export function AuctionBidForm({ bid, nominal, balance, disabled, onBid }: FormP
     <div className="auction-bid-form__fields">
       <label>Очки
         <input type="number" inputMode="numeric" min={nominal} max={100000} step="1"
-          value={points} onChange={e => setPointsInput(e.target.value)} aria-label="Очки ставки" />
+          value={pointsInput} onChange={e => setPointsInput(e.target.value)} aria-label="Очки ставки" />
       </label>
       <label>Секунды
         <input type="number" inputMode="numeric" min="2" step="1"
-          value={seconds} onChange={e => setSecondsInput(e.target.value)} aria-label="Время ставки в секундах" />
+          value={secondsInput} onChange={e => setSecondsInput(e.target.value)} aria-label="Время ставки в секундах" />
       </label>
     </div>
     <div className="auction-bid-form__quick">
