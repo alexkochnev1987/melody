@@ -34,7 +34,7 @@ test('saving chosen pregame hint affects only the one song', () => {
     index: 0, title: 'A', artist: 'First', youtubeId: 'abcdefghijk',
     hints: ['option A', 'option B', 'option C'], introHint: 'option B',
   }]);
-  assert.equal(next[0].introHint, 'option B');
+  assert.equal((next[0] as typeof next[0] & { introHint?: string }).introHint, 'option B');
   assert.equal(next[0].points, original[0].points);
   assert.deepEqual(next[1], original[1]);
 });
