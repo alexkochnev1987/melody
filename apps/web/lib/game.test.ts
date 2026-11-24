@@ -110,7 +110,7 @@ test('host pause and reconnect do not reset listening time', () => {
 });
 
 test('cannot reactivate STOP after time has elapsed or on another song', () => {
-  let g = prepared();
+  const g = prepared();
   g.playbackElapsedMs = 20_000;
   g.playbackActive = false;
   assert.throws(()=>exec(g,{type:'buzz',id:'late',playerId:'one',songId:'a'}));
