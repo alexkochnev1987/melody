@@ -2,6 +2,7 @@
 
 import { getPlayerView, type PlayerSnapshot } from '@/lib/player-view';
 import SongBoard from './song-board';
+import { AuctionBidForm, AuctionSummary } from './auction-panel';
 
 type Props = {
   state: PlayerSnapshot;
@@ -11,11 +12,14 @@ type Props = {
   busy: boolean;
   onBuzz: () => void;
   onChoose: (songId: string) => void;
+  onBid: (points: number, seconds: number) => void;
 };
 
-export default function PlayerScreen({ state, playerId, room, connected, busy, onBuzz, onChoose }: Props) {
+export default function PlayerScreen({ state, playerId, room, connected, busy, onBuzz, onChoose, onBid }: Props) {
   const view = getPlayerView(state, playerId, connected, busy);
   const choosing = state.status === 'revealed' && state.chooserId === playerId;
+  const bidding = state.auctionEnabled === true && state.status === 'bidding';
+  const preparing = state.auctionEnabled === true && state.status === 'selected';
   const onStop = () => {
     if (!view.canBuzz) return;
     if (typeof navigator.vibrate === 'function') navigator.vibrate(25);
@@ -23,7 +27,7 @@ export default function PlayerScreen({ state, playerId, room, connected, busy, o
   };
 
   return (
-    <section className="player-screen" aria-label="Экран игрока">
+    <section className={`player-screen${bidding || preparing ? ' player-screen--auction' : ''}`} aria-label="Экран игрока">
       <div className="player-screen__meta">
         <span className="eyebrow">КОМНАТА {room}</span>
         <span className={connected ? 'connection' : 'connection offline'}>
@@ -52,6 +56,13 @@ export default function PlayerScreen({ state, playerId, room, connected, busy, o
         <h1>{view.title}</h1>
         <p>{view.description}</p>
         {view.answer && <div className="player-screen__answer"><span>ПРАВИЛЬНЫЙ ОТВЕТ</span><strong>{view.answer}</strong></div>}
+        {(bidding || preparing) && <div className="player-screen__auction">
+          <AuctionSummary bid={state.currentBid} players={state.players}
+            category={state.song.category ?? 'Разное'} nominal={state.song.points} introHint={state.introHint} />
+          {bidding && <AuctionBidForm key={state.currentBid?.commandId ?? 'first'} bid={state.currentBid}
+            players={state.players} category={state.song.category ?? 'Разное'}
+            nominal={state.song.points} disabled={!connected || busy} onBid={onBid} />}
+        </div>}
         {state.revealedHints && state.revealedHints.length > 0 && !choosing &&
           <div className="player-screen__hints">
             {state.revealedHints.map((hint, i) => <p key={i}>💡 {hint}</p>)}
@@ -62,7 +73,7 @@ export default function PlayerScreen({ state, playerId, room, connected, busy, o
         </div>}
       </div>
 
-      {!choosing && <div className="player-screen__action">
+      {!choosing && !bidding && !preparing && <div className="player-screen__action">
         <button
           type="button"
           className={`player-screen__stop${view.canBuzz ? ' player-screen__stop--active' : ''}`}

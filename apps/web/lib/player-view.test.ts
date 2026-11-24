@@ -43,3 +43,15 @@ test('song answer is hidden until the round has been revealed', () => {
   assert.equal(view({ status: 'revealed', song }).answer, 'Band — Secret');
   assert.equal(view({ status: 'finished', song }).answer, 'Band — Secret');
 });
+
+test('auction: only the winning bidder sees enabled STOP', () => {
+  const auctionState = { status: 'playing', auctionEnabled: true,
+    currentBid: { playerId: 'two', points: 60, seconds: 5 } };
+  assert.equal(view(auctionState).canBuzz, false);
+  assert.equal(view(auctionState).title, 'Слушает другой игрок');
+  assert.equal(getPlayerView({ ...base, ...auctionState }, 'two', true, false).canBuzz, true);
+});
+test('bidding screen does not allow STOP', () => {
+  assert.equal(view({ status: 'bidding', auctionEnabled: true }).canBuzz, false);
+  assert.equal(view({ status: 'bidding', auctionEnabled: true }).title, 'Аукцион открыт!');
+});

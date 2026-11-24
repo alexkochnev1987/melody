@@ -7,6 +7,8 @@ export type PlayerSnapshot = {
   winnerId: string | null;
   playbackActive?: boolean;
   chooserId?: string | null;
+  auctionEnabled?: boolean;
+  currentBid?: { playerId: string; points: number; seconds: number };
   board?: { id: string; category: string; points: number; played: boolean; selected: boolean }[];
   revealedHints?: string[];
   blockedPlayerIds: string[];
@@ -31,7 +33,8 @@ export function getPlayerView(state: PlayerSnapshot, playerId: string, connected
   const self = ranking.find(player => player.id === playerId);
   const rank = ranking.findIndex(player => player.id === playerId) + 1;
   const blocked = state.blockedPlayerIds.includes(playerId);
-  const canBuzz = connected && !busy && state.status === 'playing' && state.playbackActive === true && !blocked;
+  const canBuzz = connected && !busy && state.status === 'playing' && state.playbackActive === true && !blocked &&
+    (!state.auctionEnabled || state.currentBid?.playerId === playerId);
   const answer = ['revealed', 'finished'].includes(state.status) && state.song.artist && state.song.title
     ? `${state.song.artist} — ${state.song.title}`
     : null;
@@ -57,6 +60,14 @@ export function getPlayerView(state: PlayerSnapshot, playerId: string, connected
     ...base, title: 'Скоро начнём!', description: 'Ведущий готовит музыку. Держи телефон под рукой.',
     buttonLabel: 'ЖДЁМ', buttonHint: 'Ожидаем ведущего',
   };
+  if (state.status === 'bidding') return {
+    ...base, title: 'Аукцион открыт!', description: 'Перебей ставку баллами или меньшим временем.',
+    buttonLabel: 'СТАВКИ', buttonHint: 'Торги идут',
+  };
+  if (state.status === 'playing' && state.auctionEnabled && state.currentBid?.playerId !== playerId) return {
+    ...base, title: 'Слушает другой игрок', description: 'Право ответа у победителя торгов.',
+    buttonLabel: 'ЖДЁМ', buttonHint: 'Отвечает победитель аукциона',
+  };
   if (state.status === 'playing' && blocked) return {
     ...base, title: 'В этот раз не угадал', description: 'Остальные могут отвечать. Твой шанс вернётся в следующем раунде.',
     buttonLabel: 'ПАУЗА', buttonHint: 'До следующей песни',
@@ -75,7 +86,7 @@ export function getPlayerView(state: PlayerSnapshot, playerId: string, connected
     : { ...base, title: 'Отвечает другой игрок', description: 'Жди решения ведущего. Раунд ещё может продолжиться.',
         buttonLabel: 'ЖДЁМ', buttonHint: 'Сейчас не твой ход' };
   if (state.status === 'selected') return {
-    ...base, title: 'Песня выбрана!', description: 'Ведущий готовит музыку. Скоро начнём.',
+    ...base, title: 'Ставка принята!', description: 'Ведущий готовит музыку. Время и очки зафиксированы.',
     buttonLabel: 'СКОРО', buttonHint: 'Ожидаем ведущего',
   };
   if (state.status === 'revealed' && state.chooserId === playerId) return {
