@@ -1,5 +1,7 @@
 'use client';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ALL_HINTS, canStartHintTask, songHintKey, type HintOperation, type HintTasks } from '@/lib/hint-activity';
+import type { HumorStyle } from '@/lib/humor-style';
 import { authClient } from '@/lib/auth-client';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -12,6 +14,13 @@ type Catalog = { games: GameSet[]; user: Viewer | null; googleConfigured: boolea
 
 const blankSong = (): Track => ({ title: '', artist: '', youtubeId: '', points: 10, startSeconds: 0, category: 'Разное', hints: [], introHint: '' });
 const emptyGame = (): GameSet => ({ id: '', owner_id: '', title: '', description: '', songs: [] });
+const humorModes: { id: HumorStyle; title: string; example: string }[] = [
+  { id: 'conversational', title: 'Как друг', example: 'Живая фраза, словно за столом с друзьями' },
+  { id: 'ironic', title: 'С иронией', example: 'Лёгкая самоирония, без злости' },
+  { id: 'absurd', title: 'Немного абсурда', example: 'Смешной неожиданный поворот' },
+  { id: 'warm', title: 'Добрый юмор', example: 'Просто, понятно и без колкостей' },
+];
+type HintFeedback = { text: string; error: boolean };
 async function post(body: unknown) {
   const res = await fetch('/api/sets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const data = await res.json();
@@ -31,7 +40,12 @@ export default function Admin() {
   const [startingPoints, setStartingPoints] = useState(300);
   const [history, setHistory] = useState<HistoricGame[]>([]);
   const [historyError, setHistoryError] = useState('');
-  const [hintNotice, setHintNotice] = useState('');
+  const [humorStyle, setHumorStyle] = useState<HumorStyle>('conversational');
+  const [humorBrief, setHumorBrief] = useState('');
+  const [hintTasks, setHintTasks] = useState<HintTasks>({});
+  const hintTasksRef = useRef<Record<string, HintOperation>>({});
+  const [hintFeedback, setHintFeedback] = useState<Record<string, HintFeedback>>({});
+  const anyHintBusy = Object.keys(hintTasks).length > 0;
   const refresh = useCallback(async () => {
     const res = await fetch('/api/sets', { cache: 'no-store' });
     if (!res.ok) throw new Error('Не удалось загрузить игры');
@@ -76,81 +90,118 @@ export default function Admin() {
       setEditing({ ...editing, songs: [...editing.songs, ...data.songs.map((s: { title: string; artist: string; youtubeId: string; category?: string; hints?: string[] }) => ({ title: s.title, artist: s.artist, youtubeId: s.youtubeId || '', points: 10, startSeconds: 0, category: s.category || 'Разное', hints: s.hints ?? [] }))] });
     });
   }
+  /**
+   * Ref synchronously reserves the operation before React re-renders:
+   * simultaneous clicks cannot start the same request twice.
+   * Other song cards remain interactive; a bulk job is exclusive.
+   */
+  async function runHintTask(key: string, operation: HintOperation, work: () => Promise<string>) {
+    if (busy || !canStartHintTask(hintTasksRef.current, key)) return;
+    const started = { ...hintTasksRef.current, [key]: operation };
+    hintTasksRef.current = started;
+    setHintTasks(started);
+    setHintFeedback(old => ({ ...old, [key]: { text: '', error: false } }));
+    try {
+      const message = await work();
+      setHintFeedback(old => ({ ...old, [key]: { text: message, error: false } }));
+    } catch (e) {
+      setHintFeedback(old => ({ ...old, [key]: {
+        text: e instanceof Error ? e.message : 'Не удалось выполнить действие',
+        error: true,
+      } }));
+    } finally {
+      const next = { ...hintTasksRef.current };
+      delete next[key];
+      hintTasksRef.current = next;
+      setHintTasks(next);
+    }
+  }
+
   async function generateHints(indices?: number[]) {
     if (!editing) return;
-    const currentGame = editing;
-    const selected = indices ?? currentGame.songs.map((_, index) => index);
-    if (!selected.length || selected.some(index => !currentGame.songs[index]?.title.trim() ||
-        !currentGame.songs[index]?.artist.trim())) {
-      setError('Сначала укажи название и исполнителя для каждой выбранной песни.');
+    const snapshot = editing;
+    const selected = indices ?? snapshot.songs.map((_, index) => index);
+    const key = indices?.length === 1 ? songHintKey(indices[0]) : ALL_HINTS;
+    if (!selected.length || selected.some(index => !snapshot.songs[index]?.title.trim() ||
+      !snapshot.songs[index]?.artist.trim())) {
+      setHintFeedback(old => ({ ...old, [key]: {
+        text: 'Сначала укажи название и исполнителя для выбранных песен.',
+        error: true,
+      } }));
       return;
     }
-    setHintNotice('');
-    await perform(async () => {
-      const updates = new Map<number, string[]>();
+    await runHintTask(key, 'generate', async () => {
+      let succeeded = 0;
       let failed = 0;
-      // Smaller batches keep structured output within model limits.
+      const preferences = { style: humorStyle, humorBrief: humorBrief.trim() };
       for (let offset = 0; offset < selected.length; offset += 15) {
         const batch = selected.slice(offset, offset + 15);
-        const songs = batch.map(i => ({
-          title: currentGame.songs[i].title,
-          artist: currentGame.songs[i].artist,
-          category: currentGame.songs[i].category || 'Разное',
+        const songs = batch.map(index => ({
+          title: snapshot.songs[index].title,
+          artist: snapshot.songs[index].artist,
+          category: snapshot.songs[index].category || 'Разное',
         }));
         const res = await fetch('/api/hints', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ songs }),
+          body: JSON.stringify({ songs, ...preferences }),
         });
         const data: { songs?: { index: number; hints: string[] }[]; error?: string } = await res.json();
         if (!res.ok) throw new Error(data.error || 'Не удалось создать подсказки');
+        const updates = new Map<number, string[]>();
         for (const result of data.songs ?? []) {
-          const i = batch[result.index];
-          if (i === undefined) continue;
-          if (result.hints.length === 3) updates.set(i, result.hints);
+          const index = batch[result.index];
+          if (index === undefined) continue;
+          if (result.hints.length === 3) { updates.set(index, result.hints); succeeded++; }
           else failed++;
         }
-      }
-      setEditing(current => {
-        if (!current || current.id !== currentGame.id) return current;
-        return {
-          ...current,
-          songs: current.songs.map((song, index) => {
-            const expected = currentGame.songs[index];
+        // Apply each batch immediately. Successful results survive a later batch failure.
+        setEditing(current => {
+          if (!current || current.id !== snapshot.id) return current;
+          return { ...current, songs: current.songs.map((song, index) => {
+            const expected = snapshot.songs[index];
             const hints = updates.get(index);
-            if (!hints || !expected || song.title !== expected.title || song.artist !== expected.artist) return song;
+            if (!hints || !expected || song.title !== expected.title ||
+              song.artist !== expected.artist || song.youtubeId !== expected.youtubeId) return song;
             return { ...song, hints, introHint: song.introHint?.trim() || hints[0] };
-          }),
-        };
-      });
-      if (failed) setError(`Для ${failed} песен подсказки не прошли проверку. Повтори генерацию для них.`);
-      if (updates.size) setHintNotice(indices?.length === 1
-        ? 'Три варианта подсказки готовы. Выбери один, при необходимости исправь текст и сохрани песню.'
-        : `Подсказки заполнены для ${updates.size} песен. Проверь и нажми «Сохранить все подсказки».`);
+          }) };
+        });
+      }
+      if (!succeeded) throw new Error('Подсказки не прошли проверку. Попробуй другие пожелания к юмору.');
+      const savedMessage = indices?.length === 1
+        ? 'Три варианта готовы. Выбери понравившийся и сохрани подсказку этой песни.'
+        : `Варианты готовы для ${succeeded} песен. Выбери шутки и сохрани все подсказки.`;
+      return failed ? `${savedMessage} Для ${failed} песен AI не создал подходящих вариантов.` : savedMessage;
     });
   }
 
   async function saveHints(indices?: number[]) {
     if (!editing) return;
-    if (!editing.id) {
-      setError('Сначала сохрани новую игру, затем отдельно сохраняй подсказки.');
+    const game = editing;
+    const selected = indices ?? game.songs.map((_, index) => index);
+    const key = indices?.length === 1 ? songHintKey(indices[0]) : ALL_HINTS;
+    if (!game.id) {
+      setHintFeedback(old => ({ ...old, [key]: {
+        text: 'Сначала сохрани новую игру, затем отдельно сохраняй подсказки.',
+        error: true,
+      } }));
       return;
     }
-    const selected = indices ?? editing.songs.map((_, index) => index);
     if (!selected.length) return;
-    const game = editing;
-    setHintNotice('');
-    await perform(async () => {
+    await runHintTask(key, 'save', async () => {
       const updates = selected.map(index => {
         const song = game.songs[index];
-        return { index, title: song.title, artist: song.artist, youtubeId: song.youtubeId,
-          hints: (song.hints ?? []).map(hint => hint.trim()).filter(Boolean), introHint: song.introHint?.trim() ?? '' };
+        return {
+          index, title: song.title, artist: song.artist, youtubeId: song.youtubeId,
+          hints: (song.hints ?? []).map(hint => hint.trim()).filter(Boolean),
+          introHint: song.introHint?.trim() ?? '',
+        };
       });
       await post({ action: 'saveHints', id: game.id, updates });
       await refresh();
-      setHintNotice(indices?.length === 1
-        ? 'Предыгровая подсказка сохранена. Остальные песни не изменены.'
-        : 'Подсказки всех песен сохранены в базе.');
+      return indices?.length === 1
+        ? 'Сохранено! Остальные песни не изменились.'
+        : 'Все выбранные подсказки сохранены.';
     });
   }
 
@@ -175,8 +226,20 @@ export default function Admin() {
     });
   }
   const readonly = editing?.owner_id === null;
+  const openEditing = (game: GameSet) => {
+    setHintFeedback({});
+    setEditing(game);
+  };
   const invalidCount = !Number.isInteger(count) || count < 1 || count > 30;
-  const patchTrack = (index: number, update: Partial<Track>) => setEditing(g => g ? { ...g, songs: g.songs.map((s, i) => i === index ? { ...s, ...update } : s) } : g);
+  const patchTrack = (index: number, update: Partial<Track>) => {
+    setHintFeedback(old => {
+      const next = { ...old };
+      delete next[songHintKey(index)];
+      delete next[ALL_HINTS];
+      return next;
+    });
+    setEditing(g => g ? { ...g, songs: g.songs.map((s, i) => i === index ? { ...s, ...update } : s) } : g);
+  };
   const moveTrack = (index: number, offset: number) => setEditing(g => {
     if (!g || index + offset < 0 || index + offset >= g.songs.length) return g;
     const next = [...g.songs]; [next[index], next[index + offset]] = [next[index + offset], next[index]];
@@ -194,28 +257,53 @@ export default function Admin() {
         Ставка не может превышать текущий баланс игрока.</p>
     </section>}
     {!catalog ? <div className="panel">Загружаем игры…</div> : !editing ? <>
-      <div className="catalog-head"><div><span className="eyebrow">ТВОЯ МУЗЫКАЛЬНАЯ КОЛЛЕКЦИЯ</span><h1>Игры для любой компании</h1><p className="muted">Выбери готовый набор или создай свой. Комнату для игроков можно открыть в любой момент.</p></div><button className="new-game" disabled={!catalog.user} onClick={() => setEditing(emptyGame())}>+ Создать игру</button></div>
+      <div className="catalog-head"><div><span className="eyebrow">ТВОЯ МУЗЫКАЛЬНАЯ КОЛЛЕКЦИЯ</span><h1>Игры для любой компании</h1><p className="muted">Выбери готовый набор или создай свой. Комнату для игроков можно открыть в любой момент.</p></div><button className="new-game" disabled={!catalog.user} onClick={() => openEditing(emptyGame())}>+ Создать игру</button></div>
       {!catalog.user && <div className="login-hint">{catalog.googleConfigured ? 'Войди через Google, чтобы копировать и создавать игры.' : 'Для создания своих игр нужно подключить вход через Google.'}</div>}
-      <h2>Общие игры</h2><div className="catalog-grid">{catalog.games.filter(g => !g.owner_id).map(g => <article className="panel game-card" key={g.id}><span className="game-mark">♫</span><span className="eyebrow">ОБЩИЙ НАБОР</span><h2>{g.title}</h2><p className="muted">{g.description}</p><p>{g.songs.length} песен</p><button className="secondary" onClick={() => setEditing(g)}>Посмотреть песни</button><button disabled={!catalog.user || busy} onClick={() => copy(g.id)}>Скопировать к себе</button></article>)}</div>
-      <h2 className="section-title">Мои игры</h2>{catalog.user ? <div className="catalog-grid">{catalog.games.filter(g => g.owner_id === catalog.user?.id).map(g => <article className="panel game-card" key={g.id}><span className="game-mark">♪</span><span className="eyebrow">МОЯ ИГРА</span><h2>{g.title}</h2><p className="muted">{g.description || 'Своя музыкальная подборка'}</p><p>{g.songs.length} песен</p><button className="secondary" onClick={() => setEditing(g)}>Редактировать</button><button disabled={busy || !g.songs.length || !Number.isSafeInteger(startingPoints) || startingPoints < 1 || startingPoints > 100000} onClick={() => start(g.id)}>Создать комнату</button></article>)}{catalog.games.every(g => g.owner_id !== catalog.user?.id) && <p className="muted">Пока нет своих игр. Создай игру или скопируй общий набор.</p>}</div> : <p className="muted">Здесь будут игры, которые ты создашь или скопируешь.</p>}
+      <h2>Общие игры</h2><div className="catalog-grid">{catalog.games.filter(g => !g.owner_id).map(g => <article className="panel game-card" key={g.id}><span className="game-mark">♫</span><span className="eyebrow">ОБЩИЙ НАБОР</span><h2>{g.title}</h2><p className="muted">{g.description}</p><p>{g.songs.length} песен</p><button className="secondary" onClick={() => openEditing(g)}>Посмотреть песни</button><button disabled={!catalog.user || busy} onClick={() => copy(g.id)}>Скопировать к себе</button></article>)}</div>
+      <h2 className="section-title">Мои игры</h2>{catalog.user ? <div className="catalog-grid">{catalog.games.filter(g => g.owner_id === catalog.user?.id).map(g => <article className="panel game-card" key={g.id}><span className="game-mark">♪</span><span className="eyebrow">МОЯ ИГРА</span><h2>{g.title}</h2><p className="muted">{g.description || 'Своя музыкальная подборка'}</p><p>{g.songs.length} песен</p><button className="secondary" onClick={() => openEditing(g)}>Редактировать</button><button disabled={busy || !g.songs.length || !Number.isSafeInteger(startingPoints) || startingPoints < 1 || startingPoints > 100000} onClick={() => start(g.id)}>Создать комнату</button></article>)}{catalog.games.every(g => g.owner_id !== catalog.user?.id) && <p className="muted">Пока нет своих игр. Создай игру или скопируй общий набор.</p>}</div> : <p className="muted">Здесь будут игры, которые ты создашь или скопируешь.</p>}
       {catalog.user && <section className="panel history-results"><h2>История игр и результаты</h2>{history.length > 0 && <button className="secondary" onClick={downloadHistory}>Скачать историю (JSON)</button>}<p className="muted">Очки хранятся в PostgreSQL и остаются после завершения игры.</p>{historyError && <p role="alert">{historyError}</p>}{history.length === 0 && <p className="muted">Пока нет сохранённых игр этого аккаунта.</p>}{history.map(game => <article key={game.id}><strong>Комната {game.id} · {game.status === 'finished' ? 'Завершена' : 'В процессе'}</strong><div><time>{game.startedAt ? new Date(game.startedAt).toLocaleString('ru-RU') : 'Начало ещё не записано'}</time><span className="muted"> · {game.roundsPlayed} из {game.totalRounds} песен · Старт: {game.startingPoints ?? 0} · Ставок: {game.bids?.length ?? 0}</span></div><ol>{game.players.map(p => <li key={p.id}>{p.name} — <strong>{p.score}</strong> очков</li>)}</ol></article>)}</section>}
     </> : <>
-      <button className="text-button back" onClick={() => setEditing(null)}>← Все игры</button><div className="catalog-head"><div><span className="eyebrow">{readonly ? 'ОБЩАЯ ИГРА · ТОЛЬКО ПРОСМОТР' : 'РЕДАКТОР ИГРЫ'}</span><h1>{editing.title || 'Новая игра'}</h1><p className="muted">Подготовь список песен и баллы до начала игры.</p></div><div className="editor-actions">{readonly ? <><button disabled={!catalog.user || busy} onClick={() => copy(editing.id)}>Скопировать к себе</button><button className="secondary" disabled={!catalog.user || busy || !Number.isSafeInteger(startingPoints) || startingPoints < 1 || startingPoints > 100000} onClick={() => start(editing.id)}>Создать комнату</button></> : <><button disabled={busy} onClick={save}>Сохранить игру</button>{editing.id && <button className="secondary" disabled={busy || !editing.songs.length || !Number.isSafeInteger(startingPoints) || startingPoints < 1 || startingPoints > 100000} onClick={() => start(editing.id)}>Создать комнату</button>}</>}</div></div>
+      <button className="text-button back" disabled={anyHintBusy} onClick={() => { setEditing(null); setHintFeedback({}); }}>← Все игры</button><div className="catalog-head"><div><span className="eyebrow">{readonly ? 'ОБЩАЯ ИГРА · ТОЛЬКО ПРОСМОТР' : 'РЕДАКТОР ИГРЫ'}</span><h1>{editing.title || 'Новая игра'}</h1><p className="muted">Подготовь список песен и баллы до начала игры.</p></div><div className="editor-actions">{readonly ? <><button disabled={!catalog.user || busy} onClick={() => copy(editing.id)}>Скопировать к себе</button><button className="secondary" disabled={!catalog.user || busy || !Number.isSafeInteger(startingPoints) || startingPoints < 1 || startingPoints > 100000} onClick={() => start(editing.id)}>Создать комнату</button></> : <><button disabled={busy || anyHintBusy} onClick={save}>Сохранить игру</button>{editing.id && <button className="secondary" disabled={busy || anyHintBusy || !editing.songs.length || !Number.isSafeInteger(startingPoints) || startingPoints < 1 || startingPoints > 100000} onClick={() => start(editing.id)}>Создать комнату</button>}</>}</div></div>
       <section className="panel"><div className="editor-meta"><label>Название игры<input disabled={readonly} value={editing.title} onChange={e => setEditing({ ...editing, title: e.target.value })} placeholder="Например, Вечеринка 2000-х" /></label><label>Описание<input disabled={readonly} value={editing.description} onChange={e => setEditing({ ...editing, description: e.target.value })} placeholder="Для кого и какое настроение" /></label></div>
-      {!readonly && <div className="ai-box"><div className="ai-heading">✦ Добавить песни с AI</div><p className="muted">Опиши подборку. Проверенные варианты добавятся в таблицу; остальные можно найти вручную.</p><label>Пожелания<textarea value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Например, танцевальные хиты 2000-х" /></label><div className="ai-actions"><label>Количество<input type="number" min="1" max="30" value={count || ''} aria-invalid={invalidCount} aria-describedby={invalidCount ? 'admin-count-error' : undefined} onChange={e => setCount(Number(e.target.value))} /></label><button className="secondary" disabled={busy || prompt.trim().length < 5 || invalidCount} onClick={generate}>{busy ? 'Ищем…' : 'Подобрать песни'}</button></div>{invalidCount && <p id="admin-count-error" className="field-error" role="alert">Можно выбрать от 1 до 30 песен.</p>}</div>}
-      <div className="table-heading"><div><span className="eyebrow">СОСТАВ ИГРЫ</span><h2>Песни · {editing.songs.length}</h2></div>{!readonly && <button className="secondary table-add" onClick={() => setEditing({ ...editing, songs: [...editing.songs, blankSong()] })}>+ Добавить песню</button>}</div>
-      <div className="table-scroll"><table><thead><tr><th>№</th><th>Название</th><th>Исполнитель</th><th>Категория</th><th>YouTube ID</th><th>Начало, сек.</th><th>Баллы</th><th>Видео</th>{!readonly && <th>Порядок</th>}</tr></thead><tbody>{editing.songs.map((s, i) => <tr key={i}><td>{i+1}</td><td><input aria-label={`Название песни ${i+1}`} disabled={readonly} value={s.title} onChange={e => patchTrack(i, { title: e.target.value })} /></td><td><input aria-label={`Исполнитель ${i+1}`} disabled={readonly} value={s.artist} onChange={e => patchTrack(i, { artist: e.target.value })} /></td><td><input aria-label={`Категория песни ${i+1}`} disabled={readonly} value={s.category || 'Разное'} maxLength={60} onChange={e => patchTrack(i, { category: e.target.value })} /></td><td><input aria-label={`YouTube ID ${i+1}`} disabled={readonly} value={s.youtubeId} onChange={e => patchTrack(i, { youtubeId: e.target.value })} placeholder="11 символов" /></td><td><input className="points" aria-label={`Начало в секундах ${i+1}`} disabled={readonly} type="number" min="0" max="86400" step="1" value={s.startSeconds ?? 0} onChange={e => patchTrack(i, { startSeconds: Number(e.target.value) })} /></td><td><input className="points" aria-label={`Баллы ${i+1}`} disabled={readonly} type="number" min="0" max="100000" value={s.points} onChange={e => patchTrack(i, { points: Number(e.target.value) })} /></td><td>{/^[\w-]{11}$/.test(s.youtubeId) ? <button className="text-button" onClick={() => setPreview(s)}>▶ Посмотреть</button> : <a className="search-link" target="_blank" rel="noreferrer" href={`https://www.youtube.com/results?search_query=${encodeURIComponent(s.artist + ' ' + s.title)}`}>Найти</a>}</td>{!readonly && <td><div className="row-actions"><button aria-label="Поднять песню" disabled={i === 0} onClick={() => moveTrack(i,-1)}>↑</button><button aria-label="Опустить песню" disabled={i === editing.songs.length-1} onClick={() => moveTrack(i,1)}>↓</button><button aria-label="Удалить песню" onClick={() => setEditing({ ...editing, songs: editing.songs.filter((_, n) => n !== i) })}>×</button></div></td>}</tr>)}</tbody></table>{editing.songs.length === 0 && <p className="muted">Пока нет песен. Добавь первую вручную или с помощью AI.</p>}</div>
-      {!readonly && editing.songs.length > 0 && <div className="hint-editor">
+      {!readonly && <div className="ai-box"><div className="ai-heading">✦ Добавить песни с AI</div><p className="muted">Опиши подборку. Проверенные варианты добавятся в таблицу; остальные можно найти вручную.</p><label>Пожелания<textarea value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Например, танцевальные хиты 2000-х" /></label><div className="ai-actions"><label>Количество<input type="number" min="1" max="30" value={count || ''} aria-invalid={invalidCount} aria-describedby={invalidCount ? 'admin-count-error' : undefined} onChange={e => setCount(Number(e.target.value))} /></label><button className="secondary" disabled={busy || anyHintBusy || prompt.trim().length < 5 || invalidCount} onClick={generate}>{busy ? 'Ищем…' : 'Подобрать песни'}</button></div>{invalidCount && <p id="admin-count-error" className="field-error" role="alert">Можно выбрать от 1 до 30 песен.</p>}</div>}
+      <div className="table-heading"><div><span className="eyebrow">СОСТАВ ИГРЫ</span><h2>Песни · {editing.songs.length}</h2></div>{!readonly && <button className="secondary table-add" disabled={anyHintBusy} onClick={() => setEditing({ ...editing, songs: [...editing.songs, blankSong()] })}>+ Добавить песню</button>}</div>
+      <div className="table-scroll"><table><thead><tr><th>№</th><th>Название</th><th>Исполнитель</th><th>Категория</th><th>YouTube ID</th><th>Начало, сек.</th><th>Баллы</th><th>Видео</th>{!readonly && <th>Порядок</th>}</tr></thead><tbody>{editing.songs.map((s, i) => <tr key={i}><td>{i+1}</td><td><input aria-label={`Название песни ${i+1}`} disabled={readonly || Boolean(hintTasks[ALL_HINTS] || hintTasks[songHintKey(i)])} value={s.title} onChange={e => patchTrack(i, { title: e.target.value })} /></td><td><input aria-label={`Исполнитель ${i+1}`} disabled={readonly || Boolean(hintTasks[ALL_HINTS] || hintTasks[songHintKey(i)])} value={s.artist} onChange={e => patchTrack(i, { artist: e.target.value })} /></td><td><input aria-label={`Категория песни ${i+1}`} disabled={readonly || Boolean(hintTasks[ALL_HINTS] || hintTasks[songHintKey(i)])} value={s.category || 'Разное'} maxLength={60} onChange={e => patchTrack(i, { category: e.target.value })} /></td><td><input aria-label={`YouTube ID ${i+1}`} disabled={readonly || Boolean(hintTasks[ALL_HINTS] || hintTasks[songHintKey(i)])} value={s.youtubeId} onChange={e => patchTrack(i, { youtubeId: e.target.value })} placeholder="11 символов" /></td><td><input className="points" aria-label={`Начало в секундах ${i+1}`} disabled={readonly || Boolean(hintTasks[ALL_HINTS] || hintTasks[songHintKey(i)])} type="number" min="0" max="86400" step="1" value={s.startSeconds ?? 0} onChange={e => patchTrack(i, { startSeconds: Number(e.target.value) })} /></td><td><input className="points" aria-label={`Баллы ${i+1}`} disabled={readonly || Boolean(hintTasks[ALL_HINTS] || hintTasks[songHintKey(i)])} type="number" min="0" max="100000" value={s.points} onChange={e => patchTrack(i, { points: Number(e.target.value) })} /></td><td>{/^[\w-]{11}$/.test(s.youtubeId) ? <button className="text-button" onClick={() => setPreview(s)}>▶ Посмотреть</button> : <a className="search-link" target="_blank" rel="noreferrer" href={`https://www.youtube.com/results?search_query=${encodeURIComponent(s.artist + ' ' + s.title)}`}>Найти</a>}</td>{!readonly && <td><div className="row-actions"><button aria-label="Поднять песню" disabled={anyHintBusy || i === 0} onClick={() => moveTrack(i,-1)}>↑</button><button aria-label="Опустить песню" disabled={anyHintBusy || i === editing.songs.length-1} onClick={() => moveTrack(i,1)}>↓</button><button aria-label="Удалить песню" disabled={anyHintBusy} onClick={() => setEditing({ ...editing, songs: editing.songs.filter((_, n) => n !== i) })}>×</button></div></td>}</tr>)}</tbody></table>{editing.songs.length === 0 && <p className="muted">Пока нет песен. Добавь первую вручную или с помощью AI.</p>}</div>
+      {!readonly && editing.songs.length > 0 && <section className="hint-tone-panel" aria-label="Настройки юмора AI">
+        <h3>Как должна звучать шутка?</h3>
+        <p className="muted">Меньше шаблонных AI-фраз, больше живой человеческой речи. Выбери тон для следующей генерации.</p>
+        <div className="hint-tone-options" role="group" aria-label="Стиль подсказок">
+          {humorModes.map(mode => <button key={mode.id} type="button"
+            aria-pressed={humorStyle === mode.id}
+            className={humorStyle === mode.id ? 'hint-tone-option hint-tone-option--selected' : 'hint-tone-option'}
+            onClick={() => setHumorStyle(mode.id)}>
+            <strong>{mode.title}</strong><span>{mode.example}</span>
+          </button>)}
+        </div>
+        <label>Пожелания к шуткам (необязательно)
+          <textarea maxLength={300} rows={3} value={humorBrief}
+            onChange={e => setHumorBrief(e.target.value)}
+            placeholder="Например: шутки как у друзей на кухне, немного самоиронии, без пафоса и банальных метафор" />
+        </label>
+        <p className="hint">Эти настройки используются только при следующей генерации. Уже выбранные и сохранённые подсказки не меняются.</p>
+      </section>}
+      {!readonly && editing.songs.length > 0 && <div className="hint-editor" aria-busy={Boolean(hintTasks[ALL_HINTS])}>
         <h3>Предыгровые подсказки для всей игры</h3>
-        <button className="secondary" disabled={busy} onClick={() => generateHints()}>✦ Сгенерировать для всех песен</button>
-        <button disabled={busy || !editing.id} onClick={() => saveHints()}>Сохранить выбранные подсказки всех песен</button>
+        <button className="secondary" disabled={busy || anyHintBusy} onClick={() => generateHints()}>
+          {hintTasks[ALL_HINTS] === 'generate' ? '✦ Генерируем варианты для всех…' : '✦ Сгенерировать для всех песен'}
+        </button>
+        <button disabled={busy || anyHintBusy || !editing.id} onClick={() => saveHints()}>
+          {hintTasks[ALL_HINTS] === 'save' ? 'Сохраняем все подсказки…' : 'Сохранить выбранные подсказки всех песен'}
+        </button>
+        {hintFeedback[ALL_HINTS]?.text && <p className={hintFeedback[ALL_HINTS].error ? 'hint-job-error' : 'hint-job-success'}
+          role={hintFeedback[ALL_HINTS].error ? 'alert' : 'status'}>{hintFeedback[ALL_HINTS].text}</p>}
         {!editing.id && <p className="hint">Для отдельного сохранения подсказок сначала нажми «Сохранить игру».</p>}
       </div>}
-      <h2>Одна предыгровая подсказка на песню</h2>{hintNotice && <p className="notice" role="status">{hintNotice}</p>}<p className="muted">AI предлагает три альтернативы, но игрокам показывается только одна выбранная шутка — после выбора песни и до её запуска.</p>
-      {editing.songs.map((s,i) => <div className="hint-editor" key={i}>
+      <h2>Одна предыгровая подсказка на песню</h2>
+      <p className="muted">AI предлагает три альтернативы, но игрокам показывается только одна выбранная шутка — после выбора песни и до её запуска.</p>
+      {editing.songs.map((s,i) => <div className="hint-editor" aria-busy={Boolean(hintTasks[ALL_HINTS] || hintTasks[songHintKey(i)])} key={i}>
         <h3>{i+1}. {s.artist || 'Исполнитель'} — {s.title || 'Название'}</h3>
         {(s.hints?.length ?? 0) > 0 && <div className="hint-variants" role="group" aria-label={`Варианты подсказки к песне ${i+1}`}>
-          {s.hints?.map((variant,n) => <button key={n} type="button" disabled={readonly}
+          {s.hints?.map((variant,n) => <button key={n} type="button" disabled={readonly || Boolean(hintTasks[ALL_HINTS] || hintTasks[songHintKey(i)])}
             aria-pressed={s.introHint === variant}
             className={s.introHint === variant ? 'hint-variant hint-variant--selected' : 'hint-variant'}
             onClick={() => patchTrack(i, { introHint: variant })}>
@@ -223,14 +311,25 @@ export default function Admin() {
           </button>)}
         </div>}
         <label>Подсказка, которую увидят игроки
-          <textarea disabled={readonly} maxLength={220} value={s.introHint ?? s.hints?.[0] ?? ''}
+          <textarea disabled={readonly || Boolean(hintTasks[ALL_HINTS] || hintTasks[songHintKey(i)])} maxLength={220} value={s.introHint ?? s.hints?.[0] ?? ''}
             aria-label={`Выбранная подсказка к песне ${i+1}`}
             onChange={e => patchTrack(i, { introHint: e.target.value })}
             placeholder="Выбери вариант или напиши собственную шутку" />
         </label>
         {!readonly && <>
-          <button className="secondary" disabled={busy} onClick={() => generateHints([i])}>✦ Создать три варианта</button>
-          <button disabled={busy || !editing.id} onClick={() => saveHints([i])}>Сохранить подсказку этой песни</button>
+          <button className="secondary" disabled={busy || Boolean(hintTasks[ALL_HINTS] || hintTasks[songHintKey(i)])}
+            onClick={() => generateHints([i])}>
+            {hintTasks[songHintKey(i)] === 'generate' ? '✦ Генерируем для этой песни…' : '✦ Создать три варианта'}
+          </button>
+          <button disabled={busy || !editing.id || Boolean(hintTasks[ALL_HINTS] || hintTasks[songHintKey(i)])}
+            onClick={() => saveHints([i])}>
+            {hintTasks[songHintKey(i)] === 'save' ? 'Сохраняем эту песню…' : 'Сохранить подсказку этой песни'}
+          </button>
+          {hintFeedback[songHintKey(i)]?.text && <p
+            className={hintFeedback[songHintKey(i)].error ? 'hint-job-error' : 'hint-job-success'}
+            role={hintFeedback[songHintKey(i)].error ? 'alert' : 'status'}>
+            {hintFeedback[songHintKey(i)].text}
+          </p>}
         </>}
       </div>)}
       </section>
