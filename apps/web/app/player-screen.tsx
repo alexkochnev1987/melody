@@ -3,6 +3,7 @@
 import { getPlayerView, type PlayerSnapshot } from '@/lib/player-view';
 import SongBoard from './song-board';
 import { AuctionBidForm, AuctionSummary } from './auction-panel';
+import RoundResult from './round-result';
 
 type Props = {
   state: PlayerSnapshot;
@@ -67,15 +68,7 @@ export default function PlayerScreen({ state, playerId, room, connected, busy, o
             <strong>{state.players.find(p => p.id === state.currentBid?.playerId)?.name ?? 'Игрок'} · {state.currentBid.points} очков / {state.currentBid.seconds} с</strong>
             {state.status === 'playing' && <span>Осталось ~{Math.max(0, Math.ceil(state.remainingSeconds ?? state.currentBid.seconds))} с</span>}
           </div>}
-        {view.answer && <div className="player-screen__answer player-screen__answer--revealed" role="status">
-          <span>ПРАВИЛЬНЫЙ ОТВЕТ</span>
-          <strong>{state.song.title}</strong>
-          <span className="player-screen__answer-artist">{state.song.artist}</span>
-          {state.roundResult && <span className="player-screen__answer-award">
-            ✓ {state.players.find(p => p.id === state.roundResult?.playerId)?.name ?? 'Игрок'}
-            {' '}+{state.roundResult.points} очков
-          </span>}
-        </div>}
+        {view.answer && <RoundResult song={state.song} result={state.roundResult} players={state.players} />}
         {(bidding || preparing) && <div className="player-screen__auction">
           <AuctionSummary bid={state.currentBid} players={state.players}
             category={state.song.category ?? 'Разное'} nominal={state.song.points} introHint={state.introHint} />
