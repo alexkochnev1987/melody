@@ -163,3 +163,48 @@ header { height:88px; display:flex; align-items:center; gap:18px; border-bottom:
   .player-screen__center:has(.player-screen__picker) { gap: 6px; }
   .player-screen__picker .song-board__tile { min-height: 54px; }
 }
+
+
+/* Single, spoiler-free pregame clue and live bid summary shared across screens. */
+.hint-variants { display: grid; gap: 8px; }
+.hint-variant { display: grid; gap: 6px; width: 100%; min-height: 58px; text-align: left; font-size: 13px; font-weight: 500; color: #f3f1ff; background: #303245; border: 1px solid #4b4d65; border-radius: 12px; line-height: 1.45; white-space: normal; }
+.hint-variant span { font-size: 11px; text-transform: uppercase; color: #c2c3d0; font-weight: 750; letter-spacing: .7px; }
+.hint-variant--selected, .hint-variant[aria-pressed="true"] { border-color: #c7f763; background: #333d2d; }
+.hint-variant:focus-visible { outline: 3px solid #c7f763; outline-offset: 2px; }
+.auction-summary { display: grid; gap: 12px; width: 100%; background: #242635; padding: 16px; border-radius: 18px; border: 1px solid #404257; }
+.auction-summary__heading { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; align-items: center; color: #c7f763; font-size: 12px; font-weight: 800; }
+.auction-summary__heading span:last-child { color: #c1bfd1; font-weight: 600; }
+.auction-summary__hint { display: grid; gap: 6px; margin: 0; padding: 14px; background: #171926; border-radius: 12px; font-size: clamp(14px, 3.3vw, 19px); line-height: 1.4; font-weight: 650; }
+.auction-summary__hint span { font-size: 10px; letter-spacing: 1px; font-weight: 800; color: #c7f763; }
+.auction-summary__leader { display: grid; gap: 6px; padding: 3px 0; }
+.auction-summary__label { font-size: 10px; letter-spacing: 1px; color: #aaaabd; font-weight: 800; }
+.auction-summary__leader > strong { font-size: clamp(21px, 4vw, 28px); line-height: 1.1; }
+.auction-summary__values { display: flex; align-items: center; justify-content: center; gap: 14px; }
+.auction-summary__values div { display: grid; gap: 1px; text-align: center; }
+.auction-summary__values b { color: #c7f763; font-size: clamp(28px, 6vw, 42px); line-height: 1.1; font-variant-numeric: tabular-nums; }
+.auction-summary__values div span { color: #c0c1d0; font-size: 11px; }
+.auction-summary__divider { color: #7c7f96; font-size: 26px; }
+.auction-summary__empty { text-align: center; padding: 13px; color: #b8bac8; font-size: 13px; }
+.auction-bid-form { display: grid; gap: 10px; width: 100%; }
+.auction-bid-form__fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.auction-bid-form__fields label { margin: 0; font-size: 12px; font-weight: 650; text-align: left; }
+.auction-bid-form__fields input { margin: 5px 0 0; padding: 10px; font-size: 23px; font-variant-numeric: tabular-nums; }
+.auction-bid-form__quick { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.auction-bid-form__quick button { min-height: 42px; font-size: 12px; padding: 8px; }
+.auction-bid-form__error { color: #ffabad; font-size: 12px; line-height: 1.35; margin: 0; }
+.auction-bid-form button:focus-visible { outline: 3px solid #c7f763; outline-offset: 2px; }
+.auction-timer { color: #c7f763; font-size: 17px; font-weight: 800; text-align: center; }
+.player-screen--auction .player-screen__center { flex: 1; min-height: 0; justify-content: flex-start; overflow: auto; gap: 8px; overscroll-behavior: contain; }
+.player-screen--auction .player-screen__center h1 { font-size: clamp(21px, 5.5vw, 30px); }
+.player-screen--auction .player-screen__center > p { font-size: 12px; }
+.player-screen__auction { display: grid; gap: 10px; width: 100%; min-height: 0; padding: 4px 2px 8px; text-align: left; }
+.player-screen--auction .auction-summary { padding: 12px; gap: 9px; }
+.player-screen--auction .auction-summary__hint { padding: 10px; font-size: clamp(13px, 3.5vw, 16px); }
+.player-screen--auction .auction-summary__values b { font-size: clamp(25px, 6.5vw, 35px); }
+.player-screen--auction .player-screen__stats { gap: 8px; }
+@media(max-height: 700px) {
+  .player-screen--auction { gap: 5px; padding-top: 6px; }
+  .player-screen--auction .player-screen__stat { padding: 6px 10px; }
+  .player-screen--auction .player-screen__center h1 { font-size: 20px; }
+  .player-screen--auction .auction-summary__hint { padding: 7px 10px; }
+}
