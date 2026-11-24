@@ -16,6 +16,10 @@ const requestSchema = z.discriminatedUnion('action', [
     z.object({ type: z.literal('adjust'), id: z.string().uuid(), playerId: z.string(), delta: z.number().int(), reason: z.string() }),
     z.object({ type: z.literal('choose'), id: z.string().uuid(), songId: z.string().uuid() }),
     z.object({ type: z.literal('playback'), id: z.string().uuid(), songId: z.string().uuid(), active: z.boolean() }),
+    z.object({ type: z.literal('bid'), id: z.string().uuid(), songId: z.string().uuid(),
+      points: z.number().int().min(0).max(100000), seconds: z.number().int().min(2) }),
+    z.object({ type: z.literal('closeBidding'), id: z.string().uuid() }),
+    z.object({ type: z.literal('expire'), id: z.string().uuid(), songId: z.string().uuid() }),
     z.object({ type: z.literal('hint'), id: z.string().uuid() }),
     z.object({ type: z.literal('skip'), id: z.string().uuid() }),
     z.object({ type: z.literal('next'), id: z.string().uuid() }),
@@ -61,7 +65,7 @@ export async function POST(req: Request) {
         return reply({ room: body.room, token: playerToken, playerId });
       }
       let command: Command;
-      if (body.command.type === 'buzz' || body.command.type === 'choose') {
+      if (body.command.type === 'buzz' || body.command.type === 'choose' || body.command.type === 'bid') {
         const isHost = token(req) && token(req) === row.host_token;
         if (body.command.type === 'choose' && isHost) {
           command = body.command;
