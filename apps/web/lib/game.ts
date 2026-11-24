@@ -25,6 +25,8 @@ export type Game = {
   auctionEnabled?: boolean;
   currentBid?: Bid | null;
   bidHistory?: Bid[];
+  /** Configured when this room was created. Existing legacy rooms may omit it. */
+  startingPoints?: number;
   ownerId?: string;
   startedAt?: string;
   endedAt?: string;
@@ -50,6 +52,7 @@ export type Command =
 export const PLAYBACK_LEASE_MS = 12000;
 export const MIN_BID_SECONDS = 2;
 export const MAX_BID_POINTS = 100000;
+export const DEFAULT_STARTING_POINTS = 300;
 
 /** With buffering or host disconnect the recorded playing segment stops at the last host lease. */
 export function playbackUsedMs(game: Game, now = Date.now()): number {
@@ -95,7 +98,10 @@ export function validateBid(points: number, seconds: number, nominal: number, pr
   }
 }
 
-export function createGame(id: string, songs: Song[], ownerId?: string): Game {
+export function createGame(id: string, songs: Song[], ownerId?: string, startingPoints = DEFAULT_STARTING_POINTS): Game {
+  if (!Number.isSafeInteger(startingPoints) || startingPoints < 1 || startingPoints > MAX_BID_POINTS) {
+    throw new Error('Стартовый баланс должен быть от 1 до 100 000 очков');
+  }
   if (!id || !songs.length || songs.some(s =>
     !s.id || !s.title || !s.artist || !/^[\w-]{11}$/.test(s.youtubeId) ||
     !Number.isSafeInteger(s.points) || s.points < 0 || s.points > MAX_BID_POINTS ||
@@ -113,7 +119,7 @@ export function createGame(id: string, songs: Song[], ownerId?: string): Game {
     songIndex: 0, players: [], winnerId: null, blockedPlayerIds: [],
     scoreEvents: [], commandIds: [], playedSongIds: [], chooserId: null,
     hintLevel: 0, playbackActive: false, auctionEnabled: true,
-    currentBid: null, bidHistory: [], playbackElapsedMs: 0,
+    currentBid: null, bidHistory: [], playbackElapsedMs: 0, startingPoints,
     ...(ownerId ? { ownerId } : {}),
   };
 }
@@ -167,7 +173,7 @@ export function applyCommand(game: Game, command: Command): Game {
       if (next.status === 'finished' || !command.playerId || !name || name.length > 40 ||
         next.players.some(p => p.id === command.playerId)) throw new Error('Невозможно добавить игрока');
       if (next.players.some(p => p.name.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('ru') === name.toLocaleLowerCase('ru'))) throw new Error('Это имя уже занято в комнате. Выберите другое.');
-      next.players.push({ id: command.playerId, name, score: 0 });
+      next.players.push({ id: command.playerId, name, score: next.auctionEnabled ? next.startingPoints ?? DEFAULT_STARTING_POINTS : 0 });
       break;
     }
     case 'choose': {
@@ -192,8 +198,12 @@ export function applyCommand(game: Game, command: Command): Game {
       if (!next.auctionEnabled || next.status !== 'bidding' || command.songId !== song.id) {
         throw new Error('Торги сейчас недоступны');
       }
-      player(command.playerId);
+      const bidder = player(command.playerId);
+      if (bidder.score <= 0) throw new Error('Для участия в торгах нужны очки');
       validateBid(command.points, command.seconds, song.points, next.currentBid);
+      if (command.points > bidder.score) {
+        throw new Error(`Недостаточно очков: на балансе ${bidder.score}, ставка ${command.points}`);
+      }
       const bid = { playerId: command.playerId, points: command.points, seconds: command.seconds,
         songId: song.id, commandId: command.id };
       next.currentBid = bid;
@@ -282,6 +292,12 @@ export function applyCommand(game: Game, command: Command): Game {
       break;
     case 'adjust':
       if (!command.reason.trim() || command.reason.length > 200) throw new Error('Укажите причину изменения баллов');
+      // Don't silently invalidate an accepted wager with a manual score adjustment.
+      if (next.auctionEnabled && next.currentBid?.playerId === command.playerId &&
+        ['bidding','selected','playing','buzzed'].includes(next.status) &&
+        player(command.playerId).score + command.delta < next.currentBid.points) {
+        throw new Error('Нельзя уменьшить баланс ниже уже принятой ставки');
+      }
       award(command.playerId, command.delta, command.reason.trim());
       break;
     case 'hint':
@@ -327,6 +343,7 @@ export function publicGame(game: Game) {
   return {
     id: game.id, revision: game.revision, status: game.status,
     auctionEnabled: game.auctionEnabled === true,
+    startingPoints: game.startingPoints ?? (game.auctionEnabled ? DEFAULT_STARTING_POINTS : 0),
     currentBid: game.auctionEnabled ? game.currentBid ?? null : null,
     bidHistory: game.auctionEnabled ? game.bidHistory ?? [] : [],
     round: Math.min(game.songs.length, Math.max(1, currentRound)), totalRounds: game.songs.length,
