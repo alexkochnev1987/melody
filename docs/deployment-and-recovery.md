@@ -41,13 +41,25 @@ Vercel docs:
    It creates **no player** and gives **no additional starting points**.
 4. The browser offers "Вернуться в игру" and shows the restored
    name and balance. The user confirms with one tap.
-5. If the cookie no longer exists (e.g. private session closed),
-   recovery cannot be established and the normal Join flow remains.
+5. On joining a room, the server also creates a **12-character
+   personal recovery code** grouped as `XXXX-XXXX-XXXX`, with 60 bits
+   of entropy and a 7-day expiry. The guest can show/copy it from their
+   player screen and save it outside the browser (for example, a photo).
+6. If a private session closes and loses both localStorage and cookie,
+   the player can enter the room ID and their personal code under
+   **"Есть личный код восстановления?"** on any browser/device.
+7. A successful code redemption **rotates both the recovery code and
+   the room player bearer token**, revoking the old device's access.
+   Only the existing player and score are restored. The code is stored
+   in PostgreSQL as a SHA-256 hash, never plaintext.
+8. Without a valid personal code, cookie or previously saved bearer
+   token, the room cannot verify the old player's identity.
 
-The recovery token is never placed into a URL or public game snapshot.
-The browser only receives the token after proving possession of the
-previous room-bound HttpOnly cookie. It is not an email/social account
-and does not work across devices.
+No secret is placed into a URL or public game snapshot. Room recovery
+codes are high-entropy one-time secrets with an expiration, not
+guessable six-digit PINs. Treat saved screenshots as confidential.
+The personal code works across devices, while the HttpOnly cookie
+is convenient for the same device only.
 
 A disconnected participant retains server-side progress. The page
 automatically polls and also offers "Подключиться снова".
