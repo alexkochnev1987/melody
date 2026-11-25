@@ -12,6 +12,8 @@ export type Game = {
   players: Player[];
   /** Private guest fingerprint → playerId. Must never be included in publicGame(). */
   identityHashes?: Record<string, string>;
+  /** Private one-time rejoin credentials. Never present in public snapshots. */
+  recoveryCredentials?: Record<string, { hash: string; expiresAt: string }>;
   winnerId: string | null;
   blockedPlayerIds: string[];
   scoreEvents: ScoreEvent[];
