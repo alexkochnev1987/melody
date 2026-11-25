@@ -30,7 +30,7 @@ export default function RecoveryAccess({ room, code, busy, onRefresh }: Props) {
         <span className="player-recovery-room">Комната {room}</span>
         {code ? <strong className="player-recovery-secret" aria-label="Личный код восстановления">{code}</strong>
           : <p className="player-recovery-empty">Для этого устройства ещё не создан код. Нажми «Создать код».</p>}
-        {code && <button type="button" disabled={!navigator?.clipboard} onClick={() => {
+        {code && <button type="button" disabled={typeof navigator === 'undefined' || !navigator.clipboard} onClick={() => {
           void navigator.clipboard.writeText(code).then(() => setCopyFeedback('Код скопирован'))
             .catch(() => setCopyFeedback('Не удалось скопировать. Сохрани код вручную.'));
         }}>Скопировать код</button>}
