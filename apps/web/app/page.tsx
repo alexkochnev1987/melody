@@ -13,6 +13,7 @@ type Song = { id: string; title?: string; artist?: string; youtubeId?: string; p
 type State = { id: string; revision: number; status: string; auctionEnabled?: boolean; currentBid?: { playerId: string; points: number; seconds: number; commandId: string } | null; bidHistory?: { playerId: string; points: number; seconds: number; commandId: string }[]; introHint?: string | null; roundResult?: { playerId: string; points: number } | null; choiceOpen?: boolean; remainingSeconds?: number | null; playbackActive?: boolean; round: number; totalRounds: number; players: Player[]; winnerId: string | null; chooserId?: string | null; blockedPlayerIds: string[]; board?: { id: string; category: string; points: number; played: boolean; selected: boolean }[]; hintLevel?: number; revealedHints?: string[]; song: Song; hostSong?: Song };
 type DraftSong = { title: string; artist: string; youtubeId: string; points: number; category: string; hints: string[]; introHint?: string; candidateId?: string; videoTitle?: string; channel?: string; verification?: 'verified' | 'unavailable' | 'missing' };
 type Session = { room: string; token: string; playerId?: string; role: 'host' | 'player' | 'display' };
+type RecoverablePlayer = { room: string; token: string; playerId: string; name: string; score: number; restored: true };
 
 async function api(body: unknown, token?: string) {
   const res = await fetch('/api/game', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) });
@@ -40,6 +41,8 @@ export default function Home() {
   const [previewId, setPreviewId] = useState('');
   const [error, setError] = useState('');
   const [connected, setConnected] = useState(true);
+  const [recoverable, setRecoverable] = useState<RecoverablePlayer | null>(null);
+  const [checkingRecovery, setCheckingRecovery] = useState(false);
   const [busy, setBusy] = useState(false);
   const [awardTo, setAwardTo] = useState('');
   const [adjustment, setAdjustment] = useState(0);
@@ -71,6 +74,25 @@ export default function Home() {
     }
   }, []);
   const enter = (value: Session) => { localStorage.setItem('melody-session', JSON.stringify(value)); setSession(value); window.history.replaceState(null, '', `/?room=${value.room}`); };
+  // The regular saved session is restored automatically. If only the HttpOnly
+  // guest identity survives, offer a one-tap return to the same participant.
+  // We never create another player or reset their score during this lookup.
+  useEffect(() => {
+    if (session || !/^[A-Z0-9]{6}$/.test(room)) return;
+    let active = true;
+    void api({ action: 'recover', room }).then(data => {
+      if (!active) return;
+      const restored = data as RecoverablePlayer;
+      if (restored.restored && restored.room === room) setRecoverable(restored);
+    }).catch(() => {
+      if (active) setRecoverable(null);
+    }).finally(() => {
+      if (active) setCheckingRecovery(false);
+    });
+    queueMicrotask(() => { if (active) setCheckingRecovery(true); });
+    return () => { active = false; };
+  }, [room, session]);
+
   const refresh = useCallback(async () => {
     if (!session) return;
     const res = await fetch(`/api/game?room=${encodeURIComponent(session.room)}`, { cache: 'no-store', headers: session.token ? { Authorization: `Bearer ${session.token}` } : {} });
@@ -201,7 +223,15 @@ export default function Home() {
     } catch (err) { setError(err instanceof Error ? err.message : 'Ошибка подсказок'); }
     finally { setBusy(false); }
   }
-  const stop = () => { localStorage.removeItem('melody-session'); setSession(null); setState(null); window.history.replaceState(null, '', '/'); };
+  const stop = () => {
+    localStorage.removeItem('melody-session');
+    setSession(null);
+    setState(null);
+    setRecoverable(null);
+    setConnected(true);
+    setError('');
+    window.history.replaceState(null, '', '/');
+  };
   const winner = state?.players.find(p => p.id === state.winnerId);
   const bidLeader = state?.players.find(p => p.id === state.currentBid?.playerId);
   const share = inviteOrigin && session ? `${inviteOrigin}/?room=${encodeURIComponent(session.room)}` : '';
@@ -209,8 +239,32 @@ export default function Home() {
   return <main className={`shell${session?.role === 'player' ? ' player-shell' : ''}`}>
     <header><div className="brand"><span className="brand-icon">♫</span> melody<span className="brand-dot">.</span></div><span className="tag">ИГРА ДЛЯ СВОИХ</span><a className="display-link admin-link" href="/admin">Мои игры</a><a className="display-link profile-link" href="/profile">Моя статистика</a>{session && <button className="text-button" onClick={stop}>Выйти</button>}</header>
     {error && <div className="notice" role="alert">{error}</div>}
+    {session && !connected && <div className="reconnection-notice" role="status">
+      <div>
+        <strong>Соединение потеряно</strong>
+        <p>Твоё место и очки сохраняются в комнате. Мы пробуем восстановить связь автоматически.</p>
+      </div>
+      <button className="secondary" onClick={() => void refresh().catch(() => setError('Нет связи с комнатой. Проверь интернет и попробуй ещё раз.'))}>Подключиться снова</button>
+    </div>
     {!session ? <div className="home-grid"><section className="intro"><div className="eyebrow">МУЗЫКА · ДРУЗЬЯ · АЗАРТ</div><h1>Узнал мелодию?<br/><em>Жми первым.</em></h1><p>Соберите свою компанию, включите любимые песни и проверьте, кто узнает хит с первых нот.</p><div className="vinyl" aria-hidden="true"><div>♫</div></div></section>
-      <div className="stack"><section className="panel"><span className="eyebrow">ДЛЯ ИГРОКОВ</span><h2>Присоединиться</h2><label>Код комнаты<input value={room} onChange={e => setRoom(e.target.value.toUpperCase())} maxLength={6} placeholder="Например, A1B2C3" /></label><label>Твоё имя<input value={name} onChange={e => setName(e.target.value)} maxLength={40} placeholder="Как тебя зовут?" /></label><button disabled={busy} onClick={join}>Войти в игру</button></section>
+      <div className="stack"><section className="panel"><span className="eyebrow">ДЛЯ ИГРОКОВ</span><h2>Присоединиться</h2>
+          {recoverable?.room === room && <div className="restore-room-card" role="status">
+            <span className="restore-room-card__label">ТВОЁ МЕСТО СОХРАНЕНО</span>
+            <strong>С возвращением, {recoverable.name}!</strong>
+            <p>Комната {recoverable.room} · {recoverable.score} очков</p>
+            <button onClick={() => enter({
+              room: recoverable.room, token: recoverable.token,
+              playerId: recoverable.playerId, role: 'player',
+            })}>Вернуться в игру</button>
+          </div>}
+          {checkingRecovery && room.length === 6 && !recoverable && <p className="muted restore-room-checking" role="status">
+            Проверяем, осталось ли твоё место в комнате…
+          </p>}
+          <label>Код комнаты<input value={room} onChange={e => setRoom(e.target.value.toUpperCase())} maxLength={6} placeholder="Например, A1B2C3" /></label><label>Твоё имя<input value={name} onChange={e => setName(e.target.value)} maxLength={40} placeholder="Как тебя зовут?" /></label><button disabled={busy || checkingRecovery || Boolean(recoverable?.room === room)} onClick={join}>
+          Войти как новый игрок
+        </button>
+        {recoverable?.room === room && <p className="hint">Ты уже участник этой комнаты. Вернись, чтобы сохранить свой счёт и ставки.</p>}
+      </section>
       <section className="panel"><span className="eyebrow">ДЛЯ ВЕДУЩЕГО</span><h2>Создать игру</h2><p className="muted">Добавь песни и назначь баллы за правильный ответ.</p>
       <div className="ai-box"><div className="ai-heading">✦ Подборка с AI</div><p className="muted">Опиши вечеринку — AI найдёт песни и ссылки, а YouTube проверит видео одним запросом.</p><label>Какую музыку подбираем?<textarea value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} maxLength={500} placeholder="Например: танцевальные хиты 2000-х для вечеринки" /></label><label>Количество песен<input type="number" min="1" max="30" value={aiCount || ''} aria-invalid={invalidAiCount} aria-describedby={invalidAiCount ? 'ai-count-error' : undefined} onChange={e => setAiCount(Number(e.target.value))} /></label>{invalidAiCount && <p id="ai-count-error" className="field-error" role="alert">Можно выбрать от 1 до 30 песен.</p>}<button className="secondary" disabled={busy || aiPrompt.trim().length < 5 || invalidAiCount} onClick={generate}>{busy ? 'Ищем и проверяем…' : '✦ Сгенерировать подборку'}</button><p className="hint">Генерация заменит текущий список. Проверь каждую песню и выбери видео перед игрой.</p></div>
       {songs.map((song, index) => <div className="song-form" key={index}><div className="song-head"><strong>Песня {index + 1}</strong>{songs.length > 1 && <button className="text-button" onClick={() => setSongs(songs.filter((_, i) => i !== index))}>Убрать</button>}</div>{(['title', 'artist', 'youtubeId'] as const).map(field => <input aria-label={`${field === 'title' ? 'Название песни' : field === 'artist' ? 'Исполнитель' : 'YouTube ID'} ${index+1}`} key={field} placeholder={{ title: 'Название песни', artist: 'Исполнитель', youtubeId: 'YouTube ID (11 символов)' }[field]} value={song[field]} onChange={e => setSongs(songs.map((s, i) => i === index ? { ...s, [field]: e.target.value } : s))} />)}
@@ -236,7 +290,13 @@ export default function Home() {
         </label>
         <button disabled={busy || !Number.isSafeInteger(startingPoints) || startingPoints < 1 || startingPoints > 100000}
           onClick={create}>Создать комнату</button></section></div></div>
-      : !state ? <div className="panel">Подключаемся к комнате…</div>
+      : !state ? <div className="panel room-connecting">
+          <h2>Подключаемся к комнате {session.room}…</h2>
+          <p className="muted">Твой игровой прогресс хранится на сервере. Если соединение прервалось, можно повторить подключение.</p>
+          <button className="secondary" onClick={() => void refresh().catch(() => setError('Не удалось подключиться. Проверь интернет или код комнаты.'))}>
+            Повторить подключение
+          </button>
+        </div>
       : session.role === 'player'
         ? <PlayerScreen state={state} playerId={session.playerId ?? ''} room={session.room} connected={connected} busy={busy}
             onBuzz={() => command({ type: 'buzz', songId: state.song.id })}
