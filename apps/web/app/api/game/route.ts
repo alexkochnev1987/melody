@@ -9,6 +9,7 @@ import { getGuestIdentity } from '@/lib/guest-identity';
 const requestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('create'), songs: z.array(songInput).min(1).max(100), startingPoints: z.number().int().min(1).max(100000).default(300) }),
   z.object({ action: z.literal('join'), room: z.string().length(6), name: z.string().trim().min(1).max(40) }),
+  z.object({ action: z.literal('recover'), room: z.string().regex(/^[A-Z0-9]{6}$/) }),
   z.object({ action: z.literal('command'), room: z.string().length(6), command: z.discriminatedUnion('type', [
     z.object({ type: z.literal('start'), id: z.string().uuid() }),
     z.object({ type: z.literal('buzz'), id: z.string().uuid(), songId: z.string().uuid() }),
@@ -62,6 +63,28 @@ export async function POST(req: Request) {
     return await db.transaction(async tx => {
       const row = (await tx.query<Row>('SELECT state, host_token FROM rooms WHERE id = $1 FOR UPDATE', [body.room])).rows[0];
       if (!row) return reply({ error: 'Комната не найдена' }, 404);
+      if (body.action === 'recover') {
+        const identity = getGuestIdentity(req);
+        const existingId = row.state.identityHashes?.[identity.hash];
+        if (!existingId) {
+          return reply({ error: 'Сохранённое место в этой комнате не найдено' }, 404, identity.setCookie);
+        }
+        const existingPlayer = row.state.players.find(player => player.id === existingId);
+        if (!existingPlayer) {
+          return reply({ error: 'Участник не найден в комнате' }, 404, identity.setCookie);
+        }
+        const existingToken = (await tx.query<{ token: string }>(
+          'SELECT token FROM room_players WHERE room_id=$1 AND player_id=$2',
+          [body.room, existingId],
+        )).rows[0]?.token;
+        if (!existingToken) {
+          return reply({ error: 'Не удалось восстановить доступ к комнате' }, 409, identity.setCookie);
+        }
+        return reply({
+          room: body.room, playerId: existingId, token: existingToken,
+          name: existingPlayer.name, score: existingPlayer.score, restored: true,
+        }, 200, identity.setCookie);
+      }
       if (body.action === 'join') {
         const identity = getGuestIdentity(req);
         const existingId = row.state.identityHashes?.[identity.hash];
