@@ -1,17 +1,24 @@
 name: Web checks
 
 on:
-  push:
-    branches: ['**']
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: web-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   checks:
+    name: Unit tests, lint, typecheck and build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: apps/web
