@@ -427,3 +427,25 @@ header { height:88px; display:flex; align-items:center; gap:18px; border-bottom:
   .restore-room-card strong { font-size: 19px; }
   .reconnection-notice button { width: 100%; }
 }
+
+
+/* Recovery codes are deliberately not exposed in URLs, QR codes or public game state. */
+.room-recover-by-code { margin-top: 16px; padding: 12px; background: #242636; border: 1px solid #505167; border-radius: 12px; }
+.room-recover-by-code summary { cursor: pointer; color: #c7f763; font-size: 13px; font-weight: 700; }
+.room-recover-by-code .muted { font-size: 12px; }
+.room-recover-by-code input { letter-spacing: 1.4px; font-variant-numeric: tabular-nums; text-transform: uppercase; }
+.room-recover-by-code button { margin-top: 6px; width: 100%; }
+.player-screen__links { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 14px; }
+.player-screen__recovery-trigger { background: transparent; border: 0; color: #c7f763; font-size: 12px; font-weight: 700; padding: 2px 0; text-decoration: underline; text-underline-offset: 4px; }
+.player-recovery-overlay { position: fixed; z-index: 100; inset: 0; background: #0c0f19ef; display: grid; place-items: center; padding: 14px; overflow: auto; }
+.player-recovery-dialog { position: relative; display: grid; gap: 12px; width: min(100%, 440px); background: #242635; border: 1px solid #63667a; border-radius: 20px; padding: 26px 18px; box-shadow: 0 30px 100px #0009; }
+.player-recovery-dialog h2 { font-size: 26px; margin: 0; }
+.player-recovery-dialog p { margin: 0; font-size: 14px; line-height: 1.5; color: #c8cad6; }
+.player-recovery-dialog button { min-height: 44px; }
+.player-recovery-close { position: absolute; right: 7px; top: 7px; width: 38px; min-height: 38px !important; padding: 5px; background: transparent; border: 0; font-size: 20px; }
+.player-recovery-eyebrow { color: #c7f763; font-size: 10px; letter-spacing: 1.1px; font-weight: 800; }
+.player-recovery-room { font-size: 13px; color: #d4d4df; font-weight: 700; }
+.player-recovery-secret { padding: 16px 8px; background: #171a26; border: 1px solid #8cba64; border-radius: 12px; text-align: center; font-size: clamp(20px, 6vw, 28px); letter-spacing: 1px; font-variant-numeric: tabular-nums; color: #c7f763; overflow-wrap: anywhere; }
+.player-recovery-dialog p.player-recovery-details { font-size: 12px; color: #acb0bb; }
+.player-recovery-dialog p.player-recovery-empty { font-size: 13px; }
+@media(max-width:550px) { .player-recovery-dialog { padding: 24px 14px; } }
