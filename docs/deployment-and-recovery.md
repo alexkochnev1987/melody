@@ -2,8 +2,11 @@
 
 ## GitHub Checks → Production
 
-The Vercel project is linked to GitHub `alexkochnev1987/melody`, and
-its application Root Directory is `apps/web`.
+The Vercel project is linked to GitHub `alexkochnev1987/melody`.
+The Next.js app lives in `apps/web`; the exact Vercel Root Directory
+setting is not included in the read-only project metadata exposed here.
+Verify in Vercel Project Settings that it points to `apps/web`, where
+`vercel.json` lives.
 
 - **Preview deployments are disabled** at the Vercel project level.
 - `apps/web/vercel.json` explicitly disables auto-deployments for all
