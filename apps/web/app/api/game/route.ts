@@ -6,11 +6,15 @@ import { getAuth } from '@/lib/auth';
 import { songInput } from '@/lib/song-input';
 import { getGuestIdentity } from '@/lib/guest-identity';
 import { findGuestPlayer } from '@/lib/room-recovery';
+import { issueRecoveryCode, findRecoveryPlayer } from '@/lib/recovery-code';
 
 const requestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('create'), songs: z.array(songInput).min(1).max(100), startingPoints: z.number().int().min(1).max(100000).default(300) }),
   z.object({ action: z.literal('join'), room: z.string().length(6), name: z.string().trim().min(1).max(40) }),
   z.object({ action: z.literal('recover'), room: z.string().regex(/^[A-Z0-9]{6}$/) }),
+  z.object({ action: z.literal('issueRecovery'), room: z.string().regex(/^[A-Z0-9]{6}$/) }),
+  z.object({ action: z.literal('redeemRecovery'), room: z.string().regex(/^[A-Z0-9]{6}$/),
+    code: z.string().trim().min(12).max(40) }),
   z.object({ action: z.literal('command'), room: z.string().length(6), command: z.discriminatedUnion('type', [
     z.object({ type: z.literal('start'), id: z.string().uuid() }),
     z.object({ type: z.literal('buzz'), id: z.string().uuid(), songId: z.string().uuid() }),
@@ -64,6 +68,59 @@ export async function POST(req: Request) {
     return await db.transaction(async tx => {
       const row = (await tx.query<Row>('SELECT state, host_token FROM rooms WHERE id = $1 FOR UPDATE', [body.room])).rows[0];
       if (!row) return reply({ error: 'Комната не найдена' }, 404);
+      if (body.action === 'issueRecovery') {
+        const participant = (await tx.query<{ player_id: string }>(
+          'SELECT player_id FROM room_players WHERE room_id=$1 AND token=$2',
+          [body.room, token(req)],
+        )).rows[0];
+        if (!participant || !row.state.players.some(p => p.id === participant.player_id)) {
+          return reply({ error: 'Нет доступа к участнику' }, 403);
+        }
+        const { code, credential } = issueRecoveryCode(body.room);
+        const state: Game = {
+          ...row.state,
+          recoveryCredentials: {
+            ...row.state.recoveryCredentials,
+            [participant.player_id]: credential,
+          },
+        };
+        await tx.query('UPDATE rooms SET state=$2 WHERE id=$1', [body.room, JSON.stringify(state)]);
+        return reply({ recoveryCode: code, expiresAt: credential.expiresAt });
+      }
+      if (body.action === 'redeemRecovery') {
+        const playerId = findRecoveryPlayer(row.state, body.code);
+        if (!playerId) return reply({ error: 'Код неверный или срок действия истёк' }, 403);
+        const player = row.state.players.find(p => p.id === playerId);
+        if (!player) return reply({ error: 'Участник не найден' }, 404);
+        const guest = getGuestIdentity(req);
+        const identityOwner = row.state.identityHashes?.[guest.hash];
+        if (identityOwner && identityOwner !== playerId) {
+          return reply({ error: 'Этот браузер уже связан с другим игроком этой комнаты' }, 409);
+        }
+        // Transfer control to this device. Previous bearer token and recovery
+        // code immediately stop working, so a player cannot be impersonated
+        // by retaining a screenshot of an already-redeemed code.
+        const nextToken = secret();
+        const { code, credential } = issueRecoveryCode(body.room);
+        const previousHashes = Object.fromEntries(
+          Object.entries(row.state.identityHashes ?? {}).filter(([, id]) => id !== playerId),
+        );
+        const state: Game = {
+          ...row.state,
+          identityHashes: { ...previousHashes, [guest.hash]: playerId },
+          recoveryCredentials: { ...row.state.recoveryCredentials, [playerId]: credential },
+        };
+        const updated = await tx.query(
+          'UPDATE room_players SET token=$3 WHERE room_id=$1 AND player_id=$2 RETURNING player_id',
+          [body.room, playerId, nextToken],
+        );
+        if (!updated.rows.length) return reply({ error: 'Не удалось восстановить участника' }, 409);
+        await tx.query('UPDATE rooms SET state=$2 WHERE id=$1', [body.room, JSON.stringify(state)]);
+        return reply({
+          room: body.room, playerId, token: nextToken, name: player.name, score: player.score,
+          recoveryCode: code, restored: true,
+        }, 200, guest.setCookie);
+      }
       if (body.action === 'recover') {
         const identity = getGuestIdentity(req);
         const existingPlayer = findGuestPlayer(row.state, identity.hash);
@@ -102,9 +159,16 @@ export async function POST(req: Request) {
         const game = applyCommand(row.state, {
           type: 'join', id: randomUUID(), playerId, name: body.name, identityHash: identity.hash,
         });
+        const { code, credential } = issueRecoveryCode(body.room);
+        const persisted: Game = {
+          ...game,
+          recoveryCredentials: { ...game.recoveryCredentials, [playerId]: credential },
+        };
         await tx.query('INSERT INTO room_players (room_id,token,player_id) VALUES ($1,$2,$3)', [body.room, playerToken, playerId]);
-        await tx.query('UPDATE rooms SET state=$2 WHERE id=$1', [body.room, JSON.stringify(game)]);
-        return reply({ room: body.room, token: playerToken, playerId }, 200, identity.setCookie);
+        await tx.query('UPDATE rooms SET state=$2 WHERE id=$1', [body.room, JSON.stringify(persisted)]);
+        return reply({
+          room: body.room, token: playerToken, playerId, recoveryCode: code,
+        }, 200, identity.setCookie);
       }
       let command: Command;
       if (body.command.type === 'buzz' || body.command.type === 'choose' || body.command.type === 'bid') {
