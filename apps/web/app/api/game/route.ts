@@ -5,6 +5,7 @@ import { applyCommand, createGame, publicGame, type Game, type Command } from '@
 import { getAuth } from '@/lib/auth';
 import { songInput } from '@/lib/song-input';
 import { getGuestIdentity } from '@/lib/guest-identity';
+import { findGuestPlayer } from '@/lib/room-recovery';
 
 const requestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('create'), songs: z.array(songInput).min(1).max(100), startingPoints: z.number().int().min(1).max(100000).default(300) }),
@@ -65,14 +66,11 @@ export async function POST(req: Request) {
       if (!row) return reply({ error: 'Комната не найдена' }, 404);
       if (body.action === 'recover') {
         const identity = getGuestIdentity(req);
-        const existingId = row.state.identityHashes?.[identity.hash];
-        if (!existingId) {
+        const existingPlayer = findGuestPlayer(row.state, identity.hash);
+        if (!existingPlayer) {
           return reply({ error: 'Сохранённое место в этой комнате не найдено' }, 404, identity.setCookie);
         }
-        const existingPlayer = row.state.players.find(player => player.id === existingId);
-        if (!existingPlayer) {
-          return reply({ error: 'Участник не найден в комнате' }, 404, identity.setCookie);
-        }
+        const existingId = existingPlayer.id;
         const existingToken = (await tx.query<{ token: string }>(
           'SELECT token FROM room_players WHERE room_id=$1 AND player_id=$2',
           [body.room, existingId],
@@ -87,8 +85,9 @@ export async function POST(req: Request) {
       }
       if (body.action === 'join') {
         const identity = getGuestIdentity(req);
-        const existingId = row.state.identityHashes?.[identity.hash];
-        if (existingId) {
+        const existingPlayer = findGuestPlayer(row.state, identity.hash);
+        if (existingPlayer) {
+          const existingId = existingPlayer.id;
           // A returning guest can recover their original room participant
           // using their HttpOnly browser identity, without doubling their score.
           const existing = (await tx.query<{ token: string }>(
