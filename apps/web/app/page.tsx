@@ -245,7 +245,7 @@ export default function Home() {
         <p>Твоё место и очки сохраняются в комнате. Мы пробуем восстановить связь автоматически.</p>
       </div>
       <button className="secondary" onClick={() => void refresh().catch(() => setError('Нет связи с комнатой. Проверь интернет и попробуй ещё раз.'))}>Подключиться снова</button>
-    </div>
+    </div>}
     {!session ? <div className="home-grid"><section className="intro"><div className="eyebrow">МУЗЫКА · ДРУЗЬЯ · АЗАРТ</div><h1>Узнал мелодию?<br/><em>Жми первым.</em></h1><p>Соберите свою компанию, включите любимые песни и проверьте, кто узнает хит с первых нот.</p><div className="vinyl" aria-hidden="true"><div>♫</div></div></section>
       <div className="stack"><section className="panel"><span className="eyebrow">ДЛЯ ИГРОКОВ</span><h2>Присоединиться</h2>
           {recoverable?.room === room && <div className="restore-room-card" role="status">
