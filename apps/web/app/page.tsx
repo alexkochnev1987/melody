@@ -12,7 +12,7 @@ type Player = { id: string; name: string; score: number };
 type Song = { id: string; title?: string; artist?: string; youtubeId?: string; points: number; availablePoints?: number; startSeconds?: number; category?: string; hints?: string[] };
 type State = { id: string; revision: number; status: string; auctionEnabled?: boolean; currentBid?: { playerId: string; points: number; seconds: number; commandId: string } | null; bidHistory?: { playerId: string; points: number; seconds: number; commandId: string }[]; introHint?: string | null; roundResult?: { playerId: string; points: number } | null; choiceOpen?: boolean; remainingSeconds?: number | null; playbackActive?: boolean; round: number; totalRounds: number; players: Player[]; winnerId: string | null; chooserId?: string | null; blockedPlayerIds: string[]; board?: { id: string; category: string; points: number; played: boolean; selected: boolean }[]; hintLevel?: number; revealedHints?: string[]; song: Song; hostSong?: Song };
 type DraftSong = { title: string; artist: string; youtubeId: string; points: number; category: string; hints: string[]; introHint?: string; candidateId?: string; videoTitle?: string; channel?: string; verification?: 'verified' | 'unavailable' | 'missing' };
-type Session = { room: string; token: string; playerId?: string; role: 'host' | 'player' | 'display' };
+type Session = { room: string; token: string; playerId?: string; role: 'host' | 'player' | 'display'; recoveryCode?: string };
 type RecoverablePlayer = { room: string; token: string; playerId: string; name: string; score: number; restored: true };
 
 async function api(body: unknown, token?: string) {
@@ -43,6 +43,9 @@ export default function Home() {
   const [connected, setConnected] = useState(true);
   const [recoverable, setRecoverable] = useState<RecoverablePlayer | null>(null);
   const [checkingRecovery, setCheckingRecovery] = useState(false);
+  const [manualRecoveryCode, setManualRecoveryCode] = useState('');
+  const [redeemingRecovery, setRedeemingRecovery] = useState(false);
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [awardTo, setAwardTo] = useState('');
   const [adjustment, setAdjustment] = useState(0);
@@ -196,6 +199,47 @@ export default function Home() {
     catch (err) { setError(err instanceof Error ? err.message : 'Ошибка'); }
     finally { setBusy(false); }
   }
+  async function redeemRecoveryCode() {
+    if (!/^[A-Z0-9]{6}$/.test(room) || manualRecoveryCode.replace(/[\s-]/g, '').length !== 12) {
+      setError('Введи код комнаты и личный код восстановления из 12 символов.');
+      return;
+    }
+    setRedeemingRecovery(true);
+    setError('');
+    try {
+      const result = await api({
+        action: 'redeemRecovery', room: room.trim().toUpperCase(), code: manualRecoveryCode,
+      }) as { room: string; playerId: string; token: string; recoveryCode: string };
+      enter({
+        room: result.room, playerId: result.playerId, token: result.token,
+        role: 'player', recoveryCode: result.recoveryCode,
+      });
+      setManualRecoveryCode('');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Не удалось восстановить доступ');
+    } finally {
+      setRedeemingRecovery(false);
+    }
+  }
+
+  async function renewRecoveryCode() {
+    if (!session || session.role !== 'player') return;
+    setRecoveryBusy(true);
+    setError('');
+    try {
+      const response = await api({
+        action: 'issueRecovery', room: session.room,
+      }, session.token) as { recoveryCode: string };
+      const updated: Session = { ...session, recoveryCode: response.recoveryCode };
+      localStorage.setItem('melody-session', JSON.stringify(updated));
+      setSession(updated);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Не удалось создать код возврата');
+    } finally {
+      setRecoveryBusy(false);
+    }
+  }
+
   async function generate() {
     setBusy(true); setError('');
     try {
@@ -264,6 +308,21 @@ export default function Home() {
           Войти как новый игрок
         </button>
         {recoverable?.room === room && <p className="hint">Ты уже участник этой комнаты. Вернись, чтобы сохранить свой счёт и ставки.</p>}
+        <details className="room-recover-by-code">
+          <summary>Есть личный код восстановления?</summary>
+          <p className="muted">Если приватная вкладка закрылась или ты сменил телефон, введи код, который сохранил во время игры.</p>
+          <label>Личный код восстановления
+            <input autoComplete="off" autoCapitalize="characters" spellCheck={false}
+              maxLength={18} placeholder="XXXX-XXXX-XXXX"
+              value={manualRecoveryCode}
+              onChange={event => setManualRecoveryCode(event.target.value.toUpperCase())} />
+          </label>
+          <button className="secondary"
+            disabled={redeemingRecovery || busy || manualRecoveryCode.replace(/[\s-]/g, '').length !== 12 || !/^[A-Z0-9]{6}$/.test(room)}
+            onClick={() => void redeemRecoveryCode()}>
+            {redeemingRecovery ? 'Восстанавливаем место…' : 'Вернуться по коду'}
+          </button>
+        </details>
       </section>
       <section className="panel"><span className="eyebrow">ДЛЯ ВЕДУЩЕГО</span><h2>Создать игру</h2><p className="muted">Добавь песни и назначь баллы за правильный ответ.</p>
       <div className="ai-box"><div className="ai-heading">✦ Подборка с AI</div><p className="muted">Опиши вечеринку — AI найдёт песни и ссылки, а YouTube проверит видео одним запросом.</p><label>Какую музыку подбираем?<textarea value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} maxLength={500} placeholder="Например: танцевальные хиты 2000-х для вечеринки" /></label><label>Количество песен<input type="number" min="1" max="30" value={aiCount || ''} aria-invalid={invalidAiCount} aria-describedby={invalidAiCount ? 'ai-count-error' : undefined} onChange={e => setAiCount(Number(e.target.value))} /></label>{invalidAiCount && <p id="ai-count-error" className="field-error" role="alert">Можно выбрать от 1 до 30 песен.</p>}<button className="secondary" disabled={busy || aiPrompt.trim().length < 5 || invalidAiCount} onClick={generate}>{busy ? 'Ищем и проверяем…' : '✦ Сгенерировать подборку'}</button><p className="hint">Генерация заменит текущий список. Проверь каждую песню и выбери видео перед игрой.</p></div>
@@ -301,7 +360,10 @@ export default function Home() {
         ? <PlayerScreen state={state} playerId={session.playerId ?? ''} room={session.room} connected={connected} busy={busy}
             onBuzz={() => command({ type: 'buzz', songId: state.song.id })}
             onChoose={songId => command({ type: 'choose', songId })}
-            onBid={(points,seconds) => command({ type: 'bid', songId: state.song.id, points, seconds })} />
+            onBid={(points,seconds) => command({ type: 'bid', songId: state.song.id, points, seconds })}
+            recoveryCode={session.recoveryCode}
+            recoveryBusy={recoveryBusy}
+            onRefreshRecovery={() => void renewRecoveryCode()} />
         : <div className="game-grid"><section className="panel main-panel"><div className="game-top"><div><span className="eyebrow">КОМНАТА {session.room}</span><h1>{session.role === 'host' ? 'Пульт ведущего' : session.role === 'display' ? 'Играем!' : `Привет, ${state.players.find(p => p.id === session.playerId)?.name ?? 'игрок'}!`}</h1></div><span className={connected ? 'connection' : 'connection offline'}>{connected ? '● На связи' : '● Нет связи'}</span></div><p className="muted">Раунд {state.round} из {state.totalRounds} · {state.song.availablePoints ?? state.song.points} баллов</p>
         {session.role === 'host' && state.hostSong?.youtubeId &&
           (!state.auctionEnabled || ['selected','playing','buzzed','openAnswer','secondBuzzed','revealed','finished'].includes(state.status)) && <><div className="host-song"><strong>{state.hostSong.title}</strong><span>{state.hostSong.artist} · {state.hostSong.points} баллов · начало {state.hostSong.startSeconds ?? 0} сек.</span></div><HostPlayer ref={player} key={`${state.hostSong.id}:${state.auctionEnabled && ['openAnswer','secondBuzzed','revealed','finished'].includes(state.status) ? 'unlimited' : 'limited'}`} videoId={state.hostSong.youtubeId}
