@@ -4,6 +4,7 @@ import { getPlayerView, type PlayerSnapshot } from '@/lib/player-view';
 import SongBoard from './song-board';
 import { AuctionBidForm, AuctionSummary } from './auction-panel';
 import RoundResult from './round-result';
+import RecoveryAccess from './recovery-access';
 
 type Props = {
   state: PlayerSnapshot;
@@ -14,9 +15,13 @@ type Props = {
   onBuzz: () => void;
   onChoose: (songId: string) => void;
   onBid: (points: number, seconds: number) => void;
+  recoveryCode?: string;
+  recoveryBusy: boolean;
+  onRefreshRecovery: () => void;
 };
 
-export default function PlayerScreen({ state, playerId, room, connected, busy, onBuzz, onChoose, onBid }: Props) {
+export default function PlayerScreen({ state, playerId, room, connected, busy, onBuzz, onChoose, onBid,
+  recoveryCode, recoveryBusy, onRefreshRecovery }: Props) {
   const view = getPlayerView(state, playerId, connected, busy);
   const choosing = state.status === 'revealed' && state.chooserId === playerId &&
     state.choiceOpen !== false;
@@ -59,7 +64,10 @@ export default function PlayerScreen({ state, playerId, room, connected, busy, o
         </div>
       </div>
 
-      <a className="player-screen__profile-link" href="/profile">Моя история и статистика</a>
+      <div className="player-screen__links">
+        <a className="player-screen__profile-link" href="/profile">Моя статистика</a>
+        <RecoveryAccess room={room} code={recoveryCode} busy={recoveryBusy} onRefresh={onRefreshRecovery} />
+      </div>
 
       <div className="player-screen__center" aria-live="polite" aria-atomic="true">
         <span className="player-screen__round">РАУНД {state.round} ИЗ {state.totalRounds} · {state.song.availablePoints ?? state.song.points} ОЧКОВ</span>
