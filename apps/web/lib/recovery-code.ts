@@ -35,7 +35,8 @@ export function issueRecoveryCode(room: string, now = Date.now()) {
 
 export function verifyRecoveryCode(room: string, rawCode: string, credential: RecoveryCredential, now = Date.now()): boolean {
   const code = normalizeRecoveryCode(rawCode);
-  if (!VALID.test(code) || rawCode.length > 40 || new Date(credential.expiresAt).getTime() <= now) return false;
+  const expiresAt = Date.parse(credential.expiresAt);
+  if (!VALID.test(code) || rawCode.length > 40 || !Number.isFinite(expiresAt) || expiresAt <= now) return false;
   if (!/^[a-f0-9]{64}$/.test(credential.hash)) return false;
   const expected = Buffer.from(credential.hash, 'hex');
   const submitted = Buffer.from(hashRecoveryCode(room, code), 'hex');
